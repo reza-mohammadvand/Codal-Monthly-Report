@@ -1,0 +1,26 @@
+{
+  "name": "codal-monthly-manufacturing-report",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "گزارش ماهانه شرکت‌های تولیدی بورس و فرابورس از داده‌های عمومی کدال",
+  "main": "src/cli.js",
+  "scripts": {
+    "start": "node src/cli.js",
+    "sample": "node src/cli.js --symbols=فولاد --as-of=1405/06/07 --output=outputs/sample-foolad.xlsx",
+    "test": "node --test",
+    "check": "node --check src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "cheerio": "1.1.2",
+    "exceljs": "4.4.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  }
+}

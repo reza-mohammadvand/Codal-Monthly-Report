@@ -1,0 +1,9 @@
+node_modules/
+outputs/
+.cache/
+*.log
+.env
+~$*.xlsx
+
+# Legacy workbook kept locally for reference; the project generates new files from scratch.
+گزارشات ماهانه کدال.xlsx
