@@ -96,6 +96,35 @@ test('weighted total rate is calculated when all units are compatible', () => {
   assert.equal(monthly.totals.weightedRate, (420 * 1_000_000) / 30);
 });
 
+test('all-zero product revenue leaves the dominant product undefined', () => {
+  const zeroRevenueHtml = `
+  <html><body>
+    <div>تولید و فروش - کلیه مبالغ به میلیون ریال است</div>
+    <table>
+      <thead>
+        <tr><th colspan="2">شرح</th><th colspan="4">دوره یک ماهه منتهی به ۱۴۰۴/۰۱/۳۱</th></tr>
+        <tr>
+          <th>نام محصول</th><th>واحد</th><th>تعداد تولید</th><th>تعداد فروش</th>
+          <th>نرخ فروش (ریال)</th><th>مبلغ فروش (میلیون ریال)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>فروش داخلی:</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>محصول الف</td><td>تن</td><td>۱۰</td><td>۱۲</td><td>۰</td><td>۰</td></tr>
+        <tr><td>محصول ب</td><td>تن</td><td>۸</td><td>۱۰</td><td>۰</td><td>۰</td></tr>
+        <tr><td>جمع</td><td>تن</td><td>۱۸</td><td>۲۲</td><td>۰</td><td>۰</td></tr>
+      </tbody>
+    </table>
+  </body></html>`;
+
+  const monthly = parseProductionSalesReport(zeroRevenueHtml).monthly;
+  assert.equal(monthly.totals.production, 18);
+  assert.equal(monthly.totals.salesQuantity, 22);
+  assert.equal(monthly.totals.revenue, 0);
+  assert.equal(monthly.totals.weightedRate, 0);
+  assert.equal(monthly.dominantProduct, null);
+});
+
 test('returns and discounts affect net totals but cannot become the dominant product', () => {
   const adjustmentHtml = `
   <html><body>

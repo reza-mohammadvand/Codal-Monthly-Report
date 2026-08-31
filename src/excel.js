@@ -386,6 +386,24 @@ function resolveColumnLabels(industryGroups, metadata) {
   return [...periodLabels, ...growthLabels];
 }
 
+function compactColumnLabels(columnLabels) {
+  return columnLabels.map((label, index) => {
+    const text = textValue(label);
+    if (index === 1 || index === 5) {
+      return text.replace(/^میانگین\s+فروردین\s+تا\s+/, 'میانگین تا\n');
+    }
+    if (index === 2) {
+      return text.replace(/^میانگین\s+۱۲\s*ماهه\s+/, 'میانگین ۱۲ماهه\n');
+    }
+    if (index === 6 || index === 8) {
+      const match = /^رشد\s+(.+?)\s+نسبت\s+به\s+/.exec(text);
+      return match ? `رشد ${match[1]}\nسالانه` : text;
+    }
+    if (index === 7) return 'رشد میانگین\nسالانه';
+    return text;
+  });
+}
+
 function resolveMetricUnit(periodEntries, metric) {
   const units = periodEntries
     .map((entry) => entry.unit)
@@ -415,18 +433,23 @@ function buildCellNote(period, metricEntry, metric) {
   if (metric.dominantProduct && metricEntry.productName) {
     lines.push(`محصول غالب این دوره: ${metricEntry.productName}`);
   }
-  if (metricEntry.unit) lines.push(`واحد این دوره: ${metricEntry.unit}`);
-  const sourceUrl = periodSourceUrl(period);
-  if (sourceUrl) lines.push(`منبع: ${sourceUrl}`);
+  if (metric.dominantProduct && metricEntry.unit) {
+    lines.push(`واحد این دوره: ${metricEntry.unit}`);
+  }
   const reportCount = finiteNumber(period?.reportCount ?? period?.meta?.reportCount);
   const requestedCount = finiteNumber(
     period?.requestedMonthCount ?? period?.meta?.requestedMonthCount,
   );
+  let incomplete = false;
   if (reportCount !== null && requestedCount !== null && reportCount !== requestedCount) {
     lines.push(`پوشش دوره: ${reportCount} گزارش از ${requestedCount} ماه درخواستی`);
+    incomplete = true;
   } else if ((period?.complete ?? period?.meta?.complete) === false) {
     lines.push('پوشش این دوره ناقص است؛ جزئیات ماه‌های مفقود را در ممیزی بررسی کنید.');
+    incomplete = true;
   }
+  const sourceUrl = periodSourceUrl(period);
+  if (sourceUrl && (metric.dominantProduct || incomplete)) lines.push(`منبع: ${sourceUrl}`);
   return lines.join('\n');
 }
 
@@ -457,10 +480,10 @@ function setTitleBand(sheet, range, value, fill = COLORS.navy) {
 function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
   sheet.views = [{
     state: 'frozen',
-    xSplit: 5,
+    xSplit: 3,
     ySplit: HEADER_ROW,
-    topLeftCell: 'F5',
-    activeCell: 'F5',
+    topLeftCell: 'D5',
+    activeCell: 'D5',
     rightToLeft: true,
     showGridLines: false,
   }];
@@ -476,33 +499,44 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
   sheet.pageSetup.printTitlesRow = '1:4';
   sheet.headerFooter.oddFooter = '&Rصفحه &P از &N&Lگزارش ماهانه کدال';
   sheet.columns = [
-    { key: 'symbol', width: 13 },
-    { key: 'company', width: 27 },
-    { key: 'metric', width: 27 },
-    { key: 'unit', width: 22 },
-    { key: 'product', width: 27 },
-    ...Array.from({ length: 6 }, () => ({ width: 21 })),
-    ...Array.from({ length: 3 }, () => ({ width: 22 })),
+    { key: 'symbol', width: 10 },
+    { key: 'company', width: 22 },
+    { key: 'metric', width: 23 },
+    { key: 'unit', width: 13 },
+    { key: 'product', width: 18 },
+    ...Array.from({ length: 6 }, () => ({ width: 16 })),
+    ...Array.from({ length: 3 }, () => ({ width: 14 })),
     { key: 'previousPriorBaseline', width: 18, hidden: true },
   ];
 
   setTitleBand(sheet, 'A1:N1', `گزارش فعالیت ماهانه شرکت‌های تولیدی ـ ${industryName}`);
-  sheet.getRow(1).height = 32;
+  sheet.getRow(1).height = 30;
   sheet.mergeCells('A2:N2');
-  sheet.getCell('A2').value = 'دوره مبنا یک ماه قبل از ماه اجرای برنامه است؛ سلول خالی یعنی داده معتبر در دسترس نبوده است.';
-  sheet.getCell('A2').font = { name: 'Tahoma', size: 10, color: { argb: COLORS.gray700 } };
-  sheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.blueLight } };
-  sheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle', readingOrder: 'rtl' };
-  sheet.getRow(2).height = 24;
-
-  sheet.mergeCells('A3:N3');
   const generatedAt = metadata?.generatedAt ? new Date(metadata.generatedAt) : new Date();
   const generatedLabel = Number.isNaN(generatedAt.getTime())
     ? textValue(metadata?.generatedAt)
     : generatedAt.toLocaleString('fa-IR');
-  sheet.getCell('A3').value = `زمان تولید: ${generatedLabel} | منبع: کدال | ارقام رشد بر مبنای مقدار دوره مقایسه محاسبه شده‌اند.`;
-  sheet.getCell('A3').font = { name: 'Tahoma', size: 9, italic: true, color: { argb: COLORS.gray500 } };
-  sheet.getCell('A3').alignment = { horizontal: 'center', vertical: 'middle', readingOrder: 'rtl' };
+  sheet.getCell('A2').value = `دوره مبنا: ${columnLabels[4]} | تولید فایل: ${generatedLabel} | منبع: کدال | سلول خالی: داده نامعتبر یا ناقص`;
+  sheet.getCell('A2').font = { name: 'Tahoma', size: 8, color: { argb: COLORS.gray700 } };
+  sheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.gray100 } };
+  sheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle', readingOrder: 'rtl' };
+  sheet.getRow(2).height = 21;
+
+  const groupRanges = [
+    ['A3:E3', 'مشخصات', COLORS.gray700],
+    ['F3:H3', 'سال قبل', COLORS.navy2],
+    ['I3:K3', 'سال جاری', COLORS.navy2],
+    ['L3:N3', 'رشد سالانه', COLORS.teal],
+  ];
+  for (const [range, title, fill] of groupRanges) {
+    sheet.mergeCells(range);
+    const cell = sheet.getCell(range.split(':')[0]);
+    cell.value = title;
+    cell.font = { name: 'Tahoma', size: 8, bold: true, color: { argb: COLORS.white } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', readingOrder: 'rtl' };
+  }
+  sheet.getRow(3).height = 20;
 
   const headers = [
     'نماد',
@@ -510,15 +544,15 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
     'شاخص',
     'واحد',
     'محصول غالب (ماه مبنا)',
-    ...columnLabels,
+    ...compactColumnLabels(columnLabels),
   ];
   const header = sheet.getRow(HEADER_ROW);
   header.values = headers;
   header.getCell(15).value = 'مبنای رشد ماه قبل (مخفی)';
-  header.height = 58;
+  header.height = 44;
   header.eachCell({ includeEmpty: true }, (cell, column) => {
     const isGrowth = column >= 12;
-    cell.font = { name: 'Tahoma', size: 9, bold: true, color: { argb: COLORS.white } };
+    cell.font = { name: 'Tahoma', size: 8, bold: true, color: { argb: COLORS.white } };
     cell.fill = {
       type: 'pattern',
       pattern: 'solid',
@@ -532,10 +566,9 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
     };
     cell.border = {
       bottom: { style: 'medium', color: { argb: COLORS.navy } },
-      left: { style: 'thin', color: { argb: COLORS.white } },
+      left: { style: 'thin', color: { argb: COLORS.gray300 } },
     };
   });
-  sheet.autoFilter = { from: 'A4', to: 'N4' };
 }
 
 function comparisonPeriod(company) {
@@ -546,24 +579,36 @@ function comparisonPeriod(company) {
     ?? null;
 }
 
+function companyCoverageLabel(company) {
+  const parsed = finiteNumber(
+    company?.parsedReportCount ?? company?.downloadedReportCount,
+  );
+  const required = finiteNumber(company?.requiredReportCount);
+  if (parsed === null || required === null) return companyStatus(company);
+  const status = companyStatus(company);
+  return status ? `${parsed}/${required} گزارش ـ ${status}` : `${parsed}/${required} گزارش`;
+}
+
 function addCompanyBlock(sheet, company, startRow, blockIndex) {
   const periods = PERIODS.map((definition) => resolvePeriod(company?.periods, definition));
   const symbol = companySymbol(company);
   const name = companyName(company);
   const status = companyStatus(company);
-  const stripeColor = blockIndex % 2 === 0 ? COLORS.white : 'FFF8FAFC';
+  const blockEndRow = startRow + METRICS.length - 1;
 
   METRICS.forEach((metric, metricIndex) => {
     const rowNumber = startRow + metricIndex;
     const row = sheet.getRow(rowNumber);
     const entries = periods.map((period) => extractMetric(period, metric));
     const targetProduct = resolveTargetProduct(entries);
-    row.height = 24;
-    row.getCell(1).value = symbol;
-    row.getCell(2).value = name;
+    row.height = 25;
+    row.getCell(1).value = metricIndex === 0 ? symbol : null;
+    row.getCell(2).value = metricIndex === 0
+      ? [name, companyCoverageLabel(company)].filter(Boolean).join('\n')
+      : null;
     row.getCell(3).value = metric.label;
     row.getCell(4).value = resolveMetricUnit(entries, metric);
-    row.getCell(5).value = metric.dominantProduct ? targetProduct : '';
+    row.getCell(5).value = metricIndex === 3 ? targetProduct : '';
 
     entries.forEach((entry, periodIndex) => {
       const cell = row.getCell(6 + periodIndex);
@@ -629,7 +674,7 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
     for (let column = 1; column <= LAST_COLUMN; column += 1) {
       const cell = row.getCell(column);
       cell.font = { name: 'Tahoma', size: 9, color: { argb: COLORS.gray900 } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: stripeColor } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.white } };
       cell.alignment = {
         horizontal: column <= 5 ? 'right' : 'center',
         vertical: 'middle',
@@ -648,18 +693,29 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
     for (let column = 12; column <= 14; column += 1) row.getCell(column).numFmt = GROWTH_NUMBER_FORMAT;
   });
 
-  for (let rowNumber = startRow; rowNumber < startRow + METRICS.length; rowNumber += 1) {
-    const symbolCell = sheet.getCell(rowNumber, 1);
-    const nameCell = sheet.getCell(rowNumber, 2);
-    symbolCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.tealLight } };
-    nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.tealLight } };
-    symbolCell.font = { name: 'Tahoma', size: 9, bold: true, color: { argb: COLORS.navy } };
-    nameCell.font = { name: 'Tahoma', size: 9, bold: true, color: { argb: COLORS.navy } };
-    if (statusHasIssue(status)) {
-      symbolCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.amberLight } };
-      nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.amberLight } };
-    }
+  sheet.mergeCells(`A${startRow}:A${blockEndRow}`);
+  sheet.mergeCells(`B${startRow}:B${blockEndRow}`);
+  sheet.mergeCells(`E${startRow + 3}:E${startRow + 4}`);
+  const identityFill = statusHasIssue(status) ? COLORS.amberLight : COLORS.tealLight;
+  for (const cell of [sheet.getCell(startRow, 1), sheet.getCell(startRow, 2)]) {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: identityFill } };
+    cell.font = { name: 'Tahoma', size: 9, bold: true, color: { argb: COLORS.navy } };
+    cell.alignment = {
+      horizontal: 'center',
+      vertical: 'middle',
+      wrapText: true,
+      readingOrder: 'rtl',
+    };
+    cell.border = { bottom: borderBottom('medium') };
   }
+  const productCell = sheet.getCell(startRow + 3, 5);
+  productCell.font = { name: 'Tahoma', size: 8, color: { argb: COLORS.teal } };
+  productCell.alignment = {
+    horizontal: 'center',
+    vertical: 'middle',
+    wrapText: true,
+    readingOrder: 'rtl',
+  };
   if (status) sheet.getCell(startRow, 1).note = `وضعیت پردازش: ${status}`;
 }
 
@@ -674,7 +730,6 @@ function applyGrowthConditionalFormatting(sheet, lastRow) {
         formulae: ['0'],
         style: {
           font: { color: { argb: COLORS.green }, bold: true },
-          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.greenLight } },
         },
       },
       {
@@ -683,7 +738,6 @@ function applyGrowthConditionalFormatting(sheet, lastRow) {
         formulae: ['0'],
         style: {
           font: { color: { argb: COLORS.red }, bold: true },
-          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.redLight } },
         },
       },
       {
@@ -692,7 +746,6 @@ function applyGrowthConditionalFormatting(sheet, lastRow) {
         formulae: ['0'],
         style: {
           font: { color: { argb: COLORS.gray700 } },
-          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.gray100 } },
         },
       },
     ],
@@ -721,7 +774,7 @@ function allocateIndustrySheetNames(industryGroups) {
     let candidate = base;
     for (let suffix = 2; used.has(candidate.toLocaleLowerCase('fa')); suffix += 1) {
       if (suffix >= 10_000) {
-        throw new Error(`امکان ساخت نام یکتا برای شیت «${base}» وجود ندارد.`);
+        throw new Error(`Could not create a unique worksheet name for "${base}".`);
       }
       const suffixText = ` (${suffix})`;
       candidate = `${base.slice(0, 31 - suffixText.length)}${suffixText}`;
@@ -748,15 +801,15 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
   setTitleBand(sheet, 'A1:N1', textValue(metadata?.title, 'گزارش تحلیلی فعالیت ماهانه شرکت‌های تولیدی'));
   sheet.getRow(1).height = 38;
   sheet.mergeCells('A2:N2');
-  sheet.getCell('A2').value = 'داده‌های عمومی گزارش فعالیت ماهانه کدال؛ هر صنعت در یک شیت جدا و هر شرکت در یک بلوک شش‌ردیفی.';
-  sheet.getCell('A2').font = { name: 'Tahoma', size: 10, color: { argb: COLORS.gray700 } };
-  sheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle', readingOrder: 'rtl' };
-
-  const generatedAt = metadata?.generatedAt ? new Date(metadata.generatedAt) : new Date();
   const companyCount = industryGroups.reduce(
     (sum, industry) => sum + (Array.isArray(industry?.companies) ? industry.companies.length : 0),
     0,
   );
+  sheet.getCell('A2').value = `داده‌های عمومی گزارش فعالیت ماهانه کدال؛ ${companyCount.toLocaleString('fa-IR')} شرکت با یک شیت جدا برای هر صنعت.`;
+  sheet.getCell('A2').font = { name: 'Tahoma', size: 10, color: { argb: COLORS.gray700 } };
+  sheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle', readingOrder: 'rtl' };
+
+  const generatedAt = metadata?.generatedAt ? new Date(metadata.generatedAt) : new Date();
   const targetLabel = columnLabels[4];
   const infoRows = [
     ['A3:C3', 'D3:G3', 'دوره مبنا', targetLabel],
@@ -783,6 +836,13 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
       valueCell.font = { name: 'Tahoma', size: 9, color: { argb: 'FF0563C1' }, underline: true };
     }
   }
+
+  sheet.mergeCells('A6:N6');
+  sheet.getCell('A6').value = 'شش شاخص اصلی و نه ستون مقایسه‌ای بدون تغییر حفظ شده‌اند؛ جزئیات منابع در شیت مخفی «ممیزی منابع» موجود است.';
+  sheet.getCell('A6').font = { name: 'Tahoma', size: 9, color: { argb: COLORS.gray700 } };
+  sheet.getCell('A6').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.blueLight } };
+  sheet.getCell('A6').alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, readingOrder: 'rtl' };
+  sheet.getRow(6).height = 28;
 
   setTitleBand(sheet, 'A7:N7', 'راهنمای شاخص‌ها', COLORS.teal);
   const guideHeader = sheet.getRow(8);
@@ -875,6 +935,9 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
       cell.border = { bottom: borderBottom('thin', COLORS.gray200) };
     }
   });
+  for (let rowNumber = 7; rowNumber <= 23; rowNumber += 1) {
+    sheet.getRow(rowNumber).hidden = true;
+  }
   sheet.views = [{ state: 'frozen', ySplit: 2, topLeftCell: 'A3', rightToLeft: true, showGridLines: false }];
   sheet.pageSetup = { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   return sheet;
@@ -1133,7 +1196,7 @@ function createAuditSheet(workbook, industryGroups, metadata, columnLabels) {
  */
 export function createReportWorkbook({ industryGroups = [], metadata = {} } = {}) {
   if (!Array.isArray(industryGroups)) {
-    throw new TypeError('industryGroups باید آرایه باشد.');
+    throw new TypeError('industryGroups must be an array.');
   }
 
   const workbook = new ExcelJS.Workbook();
@@ -1178,10 +1241,10 @@ export function createReportWorkbook({ industryGroups = [], metadata = {} } = {}
       sheet.getCell(FIRST_DATA_ROW, 1).alignment = { horizontal: 'center', readingOrder: 'rtl' };
     }
     applyGrowthConditionalFormatting(sheet, lastRow);
-    sheet.autoFilter = { from: 'A4', to: `N${lastRow}` };
   });
 
-  createAuditSheet(workbook, industryGroups, metadata, columnLabels);
+  const auditSheet = createAuditSheet(workbook, industryGroups, metadata, columnLabels);
+  auditSheet.state = 'hidden';
   workbook.views = [{ activeTab: 0, firstSheet: 0, visibility: 'visible' }];
   return workbook;
 }
@@ -1196,7 +1259,7 @@ export function createReportWorkbook({ industryGroups = [], metadata = {} } = {}
  * @returns {Promise<{outputPath: string, industryCount: number, companyCount: number, worksheetNames: string[]}>}
  */
 export async function writeReportWorkbook({ industryGroups = [], metadata = {}, outputPath } = {}) {
-  if (!textValue(outputPath)) throw new TypeError('outputPath الزامی است.');
+  if (!textValue(outputPath)) throw new TypeError('outputPath is required.');
   const resolvedOutputPath = path.resolve(outputPath);
   const workbook = createReportWorkbook({ industryGroups, metadata });
   await fs.mkdir(path.dirname(resolvedOutputPath), { recursive: true });

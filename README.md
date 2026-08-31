@@ -8,6 +8,7 @@ by industry, and creates a six-row analytical block for every symbol.
 ## Features
 
 - Fetches data directly from Codal's public APIs; no account is required.
+- Runs a focused three-symbol pilot (`فولاد`, `فملی`, and `شپنا`) by default.
 - Includes only manufacturing issuers (`RT=1000000`) with TSE or IFB status
   (`st=0` or `st=1`).
 - Automatically selects the latest disclosure or correction for each month.
@@ -70,22 +71,28 @@ npm install
 
 ## Usage
 
-Run the report for every eligible manufacturing company using the current date:
+Run the default three-symbol pilot using the current date:
 
 ```powershell
 npm start
 ```
 
-Run the built-in single-symbol sample:
+Run the same pilot with an explicit output filename under `outputs/`:
 
 ```powershell
 npm run sample
 ```
 
+Run the report for every eligible manufacturing company:
+
+```powershell
+npm start -- --all-symbols
+```
+
 Run a limited report for selected symbols and a fixed Jalali execution date:
 
 ```powershell
-npm start -- --symbols=فولاد,فملی,غپاک --as-of=1405/06/07 --output=outputs/sample-multi.xlsx
+npm start -- --symbols=فولاد,فملی,شپنا --as-of=1405/06/09 --output=outputs/pilot-fixed-date.xlsx
 ```
 
 Display all command-line options:
@@ -99,12 +106,13 @@ npm start -- --help
 | Option | Description |
 | --- | --- |
 | `--as-of=YYYY/MM/DD` | Jalali execution date. The target report month is one month earlier. |
-| `--symbols=SYM1,SYM2` | Restrict the run to specific Codal symbols. |
+| `--symbols=SYM1,SYM2` | Replace the default pilot list with specific Codal symbols. |
+| `--all-symbols` | Process every eligible active manufacturing issuer instead of the pilot. |
 | `--limit=10` | Limit the number of companies for testing. |
 | `--output=PATH` | Set the destination `.xlsx` path. |
 | `--cache-dir=PATH` | Set the download cache directory. Default: `.cache/codal`. |
-| `--concurrency=3` | Set the number of concurrent company workers. |
-| `--delay=350` | Set the minimum delay between request starts in milliseconds. |
+| `--concurrency=2` | Set the number of concurrent company workers. |
+| `--delay=500` | Set the minimum delay between request starts in milliseconds. |
 | `--allow-partial` | Calculate averages from available months when a period is incomplete. |
 | `--refresh` | Ignore cached responses and download the data again. |
 | `--help` | Show the CLI help text. |
@@ -114,12 +122,14 @@ target Jalali year and month in its filename.
 
 ## Workbook Structure
 
-- **Guide:** report metadata, calculation rules, metric definitions, and an
-  industry index.
+- **Guide:** a compact report summary and industry index; detailed guidance is
+  retained in hidden rows and can be expanded when needed.
 - **Industry sheets:** one worksheet per industry, with six rows per company,
-  frozen headers, filters, number formatting, and conditional growth colors.
+  compact frozen headers, merged company labels, number formatting, and subtle
+  growth font colors.
 - **Source audit:** every selected Codal report, correction status, publication
-  date, tracing number, source URL, and processing status.
+  date, tracing number, source URL, and processing status. The sheet is hidden
+  by default and can be unhidden in Excel for investigation.
 
 ## Data Quality Rules
 

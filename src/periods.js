@@ -181,7 +181,7 @@ export function getReportPeriods(executionMonth) {
     },
     ytdYoY: {
       key: 'ytdYoY',
-      label: `رشد میانگین سال ${target.year} نسب به ${priorYearTarget.year}`,
+      label: `رشد میانگین سال ${target.year} نسبت به ${priorYearTarget.year}`,
       numerator: 'currentYearYtdAverage',
       denominator: 'priorYearYtdAverage',
     },
@@ -295,7 +295,9 @@ function aggregateDominantProduct(reports, average, revenueScale) {
     }
   }
 
-  const candidates = [...products.values()].filter((product) => product.hasRevenue);
+  const candidates = [...products.values()].filter(
+    (product) => product.hasRevenue && product.revenueInBaseUnit > 0,
+  );
   candidates.sort((left, right) => {
     const revenueDifference = right.revenueInBaseUnit - left.revenueInBaseUnit;
     return revenueDifference || left.firstSeen - right.firstSeen;

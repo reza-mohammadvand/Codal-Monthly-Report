@@ -38,7 +38,7 @@ function requestOnce(url, { headers, timeoutMs, rejectUnauthorized, redirectsLef
         if (location && [301, 302, 303, 307, 308].includes(response.statusCode)) {
           response.resume();
           if (redirectsLeft <= 0) {
-            reject(new HttpError("تعداد تغییر مسیرهای HTTP بیش از حد مجاز است.", { url }));
+            reject(new HttpError("The HTTP redirect limit was exceeded.", { url }));
             return;
           }
           const redirected = new URL(location, parsed).toString();
@@ -105,7 +105,7 @@ export async function requestBuffer(
       if (response.status >= 200 && response.status < 300) return response;
 
       const preview = response.body.toString("utf8", 0, Math.min(1_000, response.body.length));
-      const error = new HttpError(`HTTP ${response.status} برای ${parsed.hostname}`, {
+      const error = new HttpError(`HTTP ${response.status} from ${parsed.hostname}`, {
         status: response.status,
         url: response.url,
         body: preview,
@@ -145,6 +145,9 @@ export async function requestJson(url, options) {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new HttpError("پاسخ JSON کدال قابل‌خواندن نبود.", { url, body: text.slice(0, 1_000) });
+    throw new HttpError("The Codal JSON response could not be parsed.", {
+      url,
+      body: text.slice(0, 1_000),
+    });
   }
 }

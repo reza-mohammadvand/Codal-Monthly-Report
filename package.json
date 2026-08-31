@@ -7,7 +7,8 @@
   "main": "src/cli.js",
   "scripts": {
     "start": "node src/cli.js",
-    "sample": "node src/cli.js --symbols=فولاد --as-of=1405/06/07 --output=outputs/sample-foolad.xlsx",
+    "pilot": "node src/cli.js --output=outputs/pilot-three-symbols.xlsx",
+    "sample": "npm run pilot",
     "test": "node --test",
     "check": "node --check src/cli.js"
   },

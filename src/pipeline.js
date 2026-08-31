@@ -26,6 +26,32 @@ const METRIC_MAP = Object.freeze({
   weightedRate: "weightedRate",
 });
 
+export const DEFAULT_PILOT_SYMBOLS = Object.freeze(["فولاد", "فملی", "شپنا"]);
+
+const CONSOLE_STATUS_LABELS = Object.freeze({
+  "کامل": "complete",
+  "ناقص": "partial",
+  "بدون داده": "no data",
+  "خطای خواندن": "read error",
+  "خطا": "error",
+});
+
+const CONSOLE_SYMBOL_LABELS = Object.freeze({
+  [normalizeCodalText("فولاد")]: "FOOLAD",
+  [normalizeCodalText("فملی")]: "FMLI",
+  [normalizeCodalText("شپنا")]: "SHEPNA",
+});
+
+export function formatCompanyStatusForConsole(status) {
+  return CONSOLE_STATUS_LABELS[status] ?? "unknown";
+}
+
+export function formatCompanySymbolForConsole(symbol, ordinal = null) {
+  const label = CONSOLE_SYMBOL_LABELS[normalizeCodalText(symbol)];
+  if (label) return label;
+  return ordinal === null ? "COMPANY" : `COMPANY-${ordinal}`;
+}
+
 function monthKey(value) {
   return `${value.year}/${String(value.month).padStart(2, "0")}`;
 }
@@ -43,10 +69,10 @@ function parseAsOf(value) {
     return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
   }
   const match = String(value).trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
-  if (!match) throw new Error("تاریخ --as-of باید با قالب YYYY/MM/DD وارد شود.");
+  if (!match) throw new Error("--as-of must use the Jalali YYYY/MM/DD format.");
   const result = { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
   if (result.month < 1 || result.month > 12 || result.day < 1 || result.day > 31) {
-    throw new Error("تاریخ --as-of معتبر نیست.");
+    throw new Error("--as-of contains an invalid month or day.");
   }
   return result;
 }
@@ -236,6 +262,66 @@ function deduplicateCompanies(companies) {
   return [...output.values()];
 }
 
+export function selectCompanies(rawCompanies, options = {}) {
+  const requestedSymbols = Array.isArray(options.symbols)
+    ? options.symbols.map((symbol) => String(symbol).trim()).filter(Boolean)
+    : [];
+  if (options.allSymbols && requestedSymbols.length) {
+    throw new Error("--symbols and --all-symbols cannot be used together.");
+  }
+
+  const eligible = deduplicateCompanies(rawCompanies)
+    .filter((company) => [0, 1].includes(company.state));
+  const selectedSymbols = options.allSymbols
+    ? null
+    : (requestedSymbols.length ? requestedSymbols : DEFAULT_PILOT_SYMBOLS);
+
+  let selected = eligible;
+  if (selectedSymbols) {
+    const companiesBySymbol = new Map(
+      eligible.map((company) => [normalizeCodalText(company.symbol), company]),
+    );
+    const missing = selectedSymbols
+      .filter((symbol) => !companiesBySymbol.has(normalizeCodalText(symbol)));
+    if (missing.length) {
+      throw new Error(`Manufacturing symbol(s) not found: ${missing.join(", ")}`);
+    }
+    selected = selectedSymbols.map((symbol) => companiesBySymbol.get(normalizeCodalText(symbol)));
+  }
+
+  if (options.limit) selected = selected.slice(0, options.limit);
+  if (!selected.length) throw new Error("No eligible manufacturing companies were selected.");
+  return selected;
+}
+
+export function classifyCoverage({ requiredReportCount, foundReportCount, parsedReportCount }) {
+  const required = Number(requiredReportCount) || 0;
+  const found = Number(foundReportCount) || 0;
+  const parsed = Number(parsedReportCount) || 0;
+  if (required > 0 && parsed >= required) return "کامل";
+  if (parsed > 0) return "ناقص";
+  if (found > 0) return "خطای خواندن";
+  return "بدون داده";
+}
+
+export function summarizeCompanyStatuses(companies) {
+  const summary = {
+    completeCount: 0,
+    partialCount: 0,
+    noDataCount: 0,
+    readErrorCount: 0,
+    errorCount: 0,
+  };
+  for (const company of companies) {
+    if (company.status === "کامل") summary.completeCount += 1;
+    else if (company.status === "ناقص") summary.partialCount += 1;
+    else if (company.status === "بدون داده") summary.noDataCount += 1;
+    else if (company.status === "خطای خواندن") summary.readErrorCount += 1;
+    else summary.errorCount += 1;
+  }
+  return summary;
+}
+
 async function processCompany({ company, client, months, definitions, asOf, allowPartial }) {
   const from = months[0];
   const reports = await client.searchMonthlyReports({
@@ -252,19 +338,20 @@ async function processCompany({ company, client, months, definitions, asOf, allo
   }
   const monthlyReports = [];
   const errors = [];
+  const foundReportCount = months.filter((month) => latestByMonth.has(monthKey(month))).length;
   const parsedMonths = await Promise.all(months.map(async (month) => {
     const report = latestByMonth.get(monthKey(month));
     if (!report) {
-      return { error: `گزارش ${monthKey(month)} یافت نشد` };
+      return { kind: "missing", month, error: `گزارش ${monthKey(month)} یافت نشد` };
     }
     try {
       const parsed = await client.fetchAndParseReport(report);
       const normalized = normalizeMonthlyReport(report, parsed);
       return normalized
         ? { report: normalized }
-        : { error: `جدول تولید و فروش ${monthKey(month)} خوانده نشد` };
+        : { kind: "parse", month, error: `جدول تولید و فروش ${monthKey(month)} خوانده نشد` };
     } catch (error) {
-      return { error: `${monthKey(month)}: ${error.message}` };
+      return { kind: "parse", month, error: `${monthKey(month)}: ${error.message}` };
     }
   }));
   for (const item of parsedMonths) {
@@ -274,18 +361,32 @@ async function processCompany({ company, client, months, definitions, asOf, allo
 
   const calculated = buildSymbolPeriodMetrics(monthlyReports, definitions.executionMonth);
   const excelData = adaptPeriodResult(calculated, allowPartial);
+  const parsedReportCount = monthlyReports.length;
+  const missingReportCount = parsedMonths.filter((item) => item.kind === "missing").length;
+  const parseFailureCount = parsedMonths.filter((item) => item.kind === "parse").length;
+  const requiredReportCount = months.length;
+  const status = classifyCoverage({
+    requiredReportCount,
+    foundReportCount,
+    parsedReportCount,
+  });
   return {
     ...company,
     ...excelData,
-    status: monthlyReports.length ? (errors.length ? "ناقص" : "کامل") : "بدون داده",
+    status,
     errors,
     sources: monthlyReports.map((report) => ({
       year: report.year,
       month: report.month,
       ...report.source,
     })),
-    downloadedReportCount: monthlyReports.length,
-    requiredReportCount: months.length,
+    downloadedReportCount: parsedReportCount,
+    foundReportCount,
+    parsedReportCount,
+    missingReportCount,
+    parseFailureCount,
+    requiredReportCount,
+    coverageRatio: requiredReportCount ? parsedReportCount / requiredReportCount : 0,
   };
 }
 
@@ -323,7 +424,7 @@ export async function runMonthlyReport(options = {}) {
   const cache = new DiskCache(options.cacheDir ?? path.resolve(".cache/codal"), {
     refresh: options.refresh,
   });
-  const gate = new StartIntervalGate(options.requestDelayMs ?? 350);
+  const gate = new StartIntervalGate(options.requestDelayMs ?? 500);
   const transport = createCachedTransport(cache, gate);
   const client = new CodalClient({
     fetchJson: transport.json,
@@ -331,28 +432,17 @@ export async function runMonthlyReport(options = {}) {
     retries: 2,
   });
 
-  console.log(`تاریخ اجرا: ${formatAsOf(asOf)} | ماه هدف: ${monthKey(definitions.targetMonth)}`);
-  console.log("در حال دریافت فهرست شرکت‌های تولیدی و صنایع...");
+  console.log(`Run date: ${formatAsOf(asOf)} | Target month: ${monthKey(definitions.targetMonth)}`);
+  console.log("Fetching manufacturing-company and industry lists...");
   const [rawCompanies, industries] = await Promise.all([
     client.fetchProductionCompanies(),
     client.fetchIndustries(),
   ]);
-  let companies = deduplicateCompanies(rawCompanies)
-    .filter((company) => [0, 1].includes(company.state));
+  const companies = selectCompanies(rawCompanies, options);
 
-  if (options.symbols?.length) {
-    const wanted = new Set(options.symbols.map(normalizeCodalText));
-    companies = companies.filter((company) => wanted.has(normalizeCodalText(company.symbol)));
-    const found = new Set(companies.map((company) => normalizeCodalText(company.symbol)));
-    const missing = [...wanted].filter((symbol) => !found.has(symbol));
-    if (missing.length) throw new Error(`نماد تولیدی یافت نشد: ${missing.join("، ")}`);
-  }
-  if (options.limit) companies = companies.slice(0, options.limit);
-  if (!companies.length) throw new Error("هیچ شرکت تولیدی برای اجرا انتخاب نشد.");
-
-  console.log(`تعداد شرکت انتخاب‌شده: ${companies.length} | ماه‌های موردنیاز: ${months.length}`);
+  console.log(`Selected companies: ${companies.length} | Required months: ${months.length}`);
   let completed = 0;
-  const processed = await runPool(companies, options.concurrency ?? 3, async (company) => {
+  const processed = await runPool(companies, options.concurrency ?? 2, async (company) => {
     let result;
     try {
       result = await processCompany({
@@ -372,11 +462,20 @@ export async function runMonthlyReport(options = {}) {
         errors: [error.message],
         sources: [],
         downloadedReportCount: 0,
+        foundReportCount: 0,
+        parsedReportCount: 0,
+        missingReportCount: months.length,
+        parseFailureCount: 0,
         requiredReportCount: months.length,
+        coverageRatio: 0,
       };
     }
     completed += 1;
-    console.log(`[${completed}/${companies.length}] ${company.symbol}: ${result.status}`);
+    console.log(
+      `[${completed}/${companies.length}] ${formatCompanySymbolForConsole(company.symbol, completed)}: `
+      + `${formatCompanyStatusForConsole(result.status)} `
+      + `(${result.parsedReportCount ?? 0}/${result.requiredReportCount ?? months.length} reports parsed)`,
+    );
     return result;
   });
 
@@ -400,12 +499,14 @@ export async function runMonthlyReport(options = {}) {
     outputPath,
   });
 
-  const successCount = processed.filter((company) => company.downloadedReportCount > 0).length;
+  const statusSummary = summarizeCompanyStatuses(processed);
+  const successCount = statusSummary.completeCount + statusSummary.partialCount;
   return {
     outputPath,
     successCount,
     failureCount: processed.length - successCount,
     industryCount: industryGroups.length,
     companies: processed,
+    ...statusSummary,
   };
 }

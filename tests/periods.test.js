@@ -138,6 +138,29 @@ test('period dominant product uses cumulative revenue, not monthly winner freque
   assert.equal(result.dominantProduct.periodRevenueTotal, 180);
 });
 
+test('period dominant metrics are null when every product has zero revenue', () => {
+  const result = aggregatePeriod(
+    [
+      report(1405, 1, {
+        sales: 22,
+        revenue: 0,
+        products: [
+          { name: 'A', unit: 'تن', sales: 12, revenue: 0 },
+          { name: 'B', unit: 'تن', sales: 10, revenue: 0 },
+        ],
+      }),
+    ],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.equal(result.metrics.sales, 22);
+  assert.equal(result.metrics.revenue, 0);
+  assert.equal(result.metrics.weightedRate, 0);
+  assert.equal(result.dominantProduct, null);
+  assert.equal(result.metrics.dominantProductSales, null);
+  assert.equal(result.metrics.dominantProductRate, null);
+});
+
 test('incompatible units suppress meaningless total quantities and total weighted rate', () => {
   const result = aggregatePeriod(
     [report(1405, 1, { unitsCompatible: false, revenue: 500 })],

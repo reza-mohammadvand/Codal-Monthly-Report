@@ -543,7 +543,7 @@ function aggregateEntries(entries, revenueMultiplier, reportedTotals = null) {
     entries,
     adjustments: entries.filter((entry) => entry.isAdjustment),
     products,
-    dominantProduct: products.find((product) => product.revenue != null) ?? null,
+    dominantProduct: products.find((product) => product.revenue != null && product.revenue > 0) ?? null,
     reportedTotals,
     calculatedRevenue,
     totals: {
