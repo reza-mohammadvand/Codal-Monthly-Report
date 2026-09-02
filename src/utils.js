@@ -44,10 +44,18 @@ export class StartIntervalGate {
     const previous = this.tail;
     this.tail = new Promise((resolve) => { release = resolve; });
     await previous;
-    const delay = Math.max(0, this.nextStart - Date.now());
-    if (delay) await sleep(delay);
+    while (true) {
+      const delay = Math.max(0, this.nextStart - Date.now());
+      if (!delay) break;
+      await sleep(delay);
+    }
     this.nextStart = Date.now() + this.intervalMs;
     release();
+  }
+
+  defer(delayMs) {
+    const deferredStart = Date.now() + Math.max(0, Number(delayMs) || 0);
+    this.nextStart = Math.max(this.nextStart, deferredStart);
   }
 }
 

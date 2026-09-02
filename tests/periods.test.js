@@ -49,10 +49,23 @@ test('execution month is shifted back and column periods match the requested des
   assert.deepEqual(result.targetMonth, { year: 1405, month: 5 });
   assert.deepEqual(result.priorYearTargetMonth, { year: 1404, month: 5 });
   assert.deepEqual(result.previousMonth, { year: 1405, month: 4 });
-  assert.deepEqual(result.previousMonthPriorYear, { year: 1404, month: 4 });
+  assert.equal(result.fiscalYearEndMonth, 12);
+  assert.deepEqual(result.currentFiscalYearStart, { year: 1405, month: 1 });
+  assert.deepEqual(result.priorFiscalYearStart, { year: 1404, month: 1 });
   assert.equal(result.periods.priorYearYtdAverage.months.length, 5);
   assert.equal(result.periods.priorYearFullYearAverage.months.length, 12);
   assert.equal(result.periods.currentYearYtdAverage.months.length, 5);
+  assert.equal(
+    result.periods.currentYearYtdAverage.label,
+    'میانگین از ابتدای سال مالی تا مرداد 1405',
+  );
+  assert.equal(result.periods.priorYearFullYearAverage.label, 'میانگین ۱۲ ماهه سال مالی قبل');
+  assert.deepEqual(result.growth.targetMoM, {
+    key: 'targetMoM',
+    label: 'رشد مرداد 1405 نسبت به تیر 1405',
+    numerator: 'targetMonth',
+    denominator: 'previousMonth',
+  });
   assert.deepEqual(result.columnOrder, [
     'priorYearTarget',
     'priorYearYtdAverage',
@@ -62,7 +75,7 @@ test('execution month is shifted back and column periods match the requested des
     'currentYearYtdAverage',
     'targetYoY',
     'ytdYoY',
-    'previousMonthYoY',
+    'targetMoM',
   ]);
 });
 
@@ -73,7 +86,77 @@ test('Farvardin execution correctly targets Esfand of the prior year', () => {
   assert.deepEqual(result.previousMonth, { year: 1404, month: 11 });
   assert.deepEqual(result.priorYearTargetMonth, { year: 1403, month: 12 });
   assert.equal(result.periods.currentYearYtdAverage.months.length, 12);
-  assert.equal(result.periods.priorYearFullYearAverage.months[0].year, 1403);
+  assert.deepEqual(result.periods.currentYearYtdAverage.months[0], {
+    year: 1404,
+    month: 1,
+  });
+  assert.deepEqual(result.periods.currentYearYtdAverage.months.at(-1), {
+    year: 1404,
+    month: 12,
+  });
+  assert.deepEqual(result.periods.priorYearFullYearAverage.months[0], {
+    year: 1403,
+    month: 1,
+  });
+  assert.deepEqual(result.periods.priorYearFullYearAverage.months.at(-1), {
+    year: 1403,
+    month: 12,
+  });
+  assert.equal(result.growth.targetMoM.numerator, 'targetMonth');
+  assert.equal(result.growth.targetMoM.denominator, 'previousMonth');
+});
+
+test('fiscal YTD ranges cross Jalali years when the fiscal year ends in Shahrivar', () => {
+  const result = getReportPeriods(
+    { year: 1405, month: 6 },
+    { fiscalYearEndMonth: 6 },
+  );
+
+  assert.equal(result.fiscalYearEndMonth, 6);
+  assert.equal(result.fiscalYearStartMonth, 7);
+  assert.deepEqual(result.currentFiscalYearStart, { year: 1404, month: 7 });
+  assert.deepEqual(result.priorFiscalYearStart, { year: 1403, month: 7 });
+
+  assert.equal(result.periods.currentYearYtdAverage.months.length, 11);
+  assert.deepEqual(result.periods.currentYearYtdAverage.months[0], {
+    year: 1404,
+    month: 7,
+  });
+  assert.deepEqual(result.periods.currentYearYtdAverage.months.at(-1), {
+    year: 1405,
+    month: 5,
+  });
+
+  assert.equal(result.periods.priorYearYtdAverage.months.length, 11);
+  assert.deepEqual(result.periods.priorYearYtdAverage.months[0], {
+    year: 1403,
+    month: 7,
+  });
+  assert.deepEqual(result.periods.priorYearYtdAverage.months.at(-1), {
+    year: 1404,
+    month: 5,
+  });
+
+  assert.equal(result.periods.priorYearFullYearAverage.months.length, 12);
+  assert.deepEqual(result.periods.priorYearFullYearAverage.months[0], {
+    year: 1403,
+    month: 7,
+  });
+  assert.deepEqual(result.periods.priorYearFullYearAverage.months.at(-1), {
+    year: 1404,
+    month: 6,
+  });
+});
+
+test('fiscal year end month must be a valid Jalali month', () => {
+  assert.throws(
+    () => getReportPeriods({ year: 1405, month: 6 }, { fiscalYearEndMonth: 0 }),
+    /fiscalYearEndMonth must be between 1 and 12/,
+  );
+  assert.throws(
+    () => getReportPeriods({ year: 1405, month: 6 }, { fiscalYearEndMonth: 6.5 }),
+    /fiscalYearEndMonth must be an integer/,
+  );
 });
 
 test('period aggregation averages quantities but weights both rates by sales', () => {
@@ -193,30 +276,50 @@ test('growth is null for missing or zero baselines', () => {
   assert.equal(calculateGrowth(null, 100), null);
 });
 
-test('all three growth groups are built from their matching periods', () => {
+test('all three growth groups use fiscal YTD and target-month MoM comparisons', () => {
   const reports = [];
-  // Execution in Shahrivar 1405 means target Mordad and previous month Tir.
-  for (let month = 1; month <= 5; month += 1) {
-    reports.push(report(1404, month, {
+  // Prior fiscal YTD: Mehr 1403 through Mordad 1404, all with production 100.
+  for (let offset = 0; offset < 11; offset += 1) {
+    const month = addJalaliMonths({ year: 1403, month: 7 }, offset);
+    reports.push(report(month.year, month.month, {
       production: 100,
       sales: 10,
       revenue: 100,
     }));
-    reports.push(report(1405, month, {
+  }
+  // Finish the previous full fiscal year with Shahrivar 1404.
+  reports.push(report(1404, 6, {
+    production: 100,
+    sales: 10,
+    revenue: 100,
+  }));
+
+  // Current fiscal YTD: Mehr 1404 through Mordad 1405, normally double.
+  for (let offset = 0; offset < 11; offset += 1) {
+    const month = addJalaliMonths({ year: 1404, month: 7 }, offset);
+    reports.push(report(month.year, month.month, {
       production: 200,
       sales: 20,
       revenue: 200,
     }));
   }
-  // Complete prior-year 12-month average input as well.
-  for (let month = 6; month <= 12; month += 1) {
-    reports.push(report(1404, month));
-  }
+  // Tir is the immediately previous month; make it half of Mordad for MoM.
+  reports.push(report(1405, 4, {
+    production: 100,
+    sales: 10,
+    revenue: 100,
+  }));
 
-  const result = buildSymbolPeriodMetrics(reports, { year: 1405, month: 6 });
+  const result = buildSymbolPeriodMetrics(
+    reports,
+    { year: 1405, month: 6 },
+    { fiscalYearEndMonth: 6 },
+  );
 
   assert.equal(result.growth.targetYoY.production, 1);
-  assert.equal(result.growth.ytdYoY.production, 1);
-  assert.equal(result.growth.previousMonthYoY.production, 1);
+  assert.ok(Math.abs(result.growth.ytdYoY.production - (10 / 11)) < Number.EPSILON);
+  assert.equal(result.growth.targetMoM.production, 1);
   assert.equal(result.periods.priorYearFullYearAverage.meta.complete, true);
+  assert.equal(result.periods.currentYearYtdAverage.meta.reportCount, 11);
+  assert.equal(result.comparisonPeriods, undefined);
 });

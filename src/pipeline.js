@@ -1,11 +1,12 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
   CodalClient,
+  compareReportPriority,
+  extractJalaliDate,
   extractReportPeriod,
   normalizeCodalText,
-  selectLatestCorrectionPerMonth,
+  resolveFiscalYearEndMonth,
 } from "./codal.js";
 import { DiskCache } from "./cache.js";
 import { requestJson, requestText } from "./http.js";
@@ -14,7 +15,7 @@ import {
   calculateGrowth,
   getReportPeriods,
 } from "./periods.js";
-import { StartIntervalGate, normalizePersianText } from "./utils.js";
+import { StartIntervalGate, normalizePersianText, sleep } from "./utils.js";
 import { writeReportWorkbook } from "./excel.js";
 
 const METRIC_MAP = Object.freeze({
@@ -26,7 +27,7 @@ const METRIC_MAP = Object.freeze({
   weightedRate: "weightedRate",
 });
 
-export const DEFAULT_PILOT_SYMBOLS = Object.freeze(["فولاد", "فملی", "شپنا"]);
+export const DEFAULT_PILOT_SYMBOLS = Object.freeze(["فولاد", "فملی", "شپنا", "کگل"]);
 
 const CONSOLE_STATUS_LABELS = Object.freeze({
   "کامل": "complete",
@@ -40,6 +41,7 @@ const CONSOLE_SYMBOL_LABELS = Object.freeze({
   [normalizeCodalText("فولاد")]: "FOOLAD",
   [normalizeCodalText("فملی")]: "FMLI",
   [normalizeCodalText("شپنا")]: "SHEPNA",
+  [normalizeCodalText("کگل")]: "KGOL",
 });
 
 export function formatCompanyStatusForConsole(status) {
@@ -81,12 +83,22 @@ function formatAsOf(value) {
   return `${value.year}/${String(value.month).padStart(2, "0")}/${String(value.day).padStart(2, "0")}`;
 }
 
+function resolveLogger(logger) {
+  if (logger === null) return () => {};
+  if (typeof logger === "function") return logger;
+  if (logger && typeof logger.log === "function") return logger.log.bind(logger);
+  return console.log;
+}
+
+async function emitProgress(onProgress, event) {
+  if (typeof onProgress === "function") await onProgress(event);
+}
+
 function requiredMonths(definitions) {
   const unique = new Map();
   for (const period of Object.values(definitions.periods)) {
     for (const month of period.months) unique.set(monthKey(month), month);
   }
-  unique.set(monthKey(definitions.previousMonthPriorYear), definitions.previousMonthPriorYear);
   return [...unique.values()].sort((left, right) => left.year - right.year || left.month - right.month);
 }
 
@@ -188,38 +200,58 @@ function adaptPeriodResult(calculated, allowPartial) {
     target: normalizePeriodForExcel(calculated.periods.targetMonth, allowPartial),
     currentYtd: normalizePeriodForExcel(calculated.periods.currentYearYtdAverage, allowPartial),
   };
-  const previousPrior = normalizePeriodForExcel(
-    calculated.comparisonPeriods.previousMonthPriorYear,
-    allowPartial,
-  );
   const growth = {
     targetYoY: buildGrowthPeriod(periods.target, periods.priorTarget),
     ytdYoY: buildGrowthPeriod(periods.currentYtd, periods.priorYtd),
-    previousYoY: buildGrowthPeriod(periods.previous, previousPrior),
+    targetMoM: buildGrowthPeriod(periods.target, periods.previous),
   };
   return {
     periods,
     growth,
-    previousPrior,
-    comparisonPeriods: { previousMonthPriorYear: previousPrior },
   };
 }
 
-function createCachedTransport(cache, gate) {
+function createCodalRequestGate(searchIntervalMs) {
+  const searchGate = new StartIntervalGate(searchIntervalMs);
+  const reportGate = new StartIntervalGate(Math.min(searchIntervalMs, 100));
+  return {
+    wait(url) {
+      const hostname = new URL(url).hostname.toLowerCase();
+      return (hostname === "search.codal.ir" ? searchGate : reportGate).wait();
+    },
+    defer(url, delayMs) {
+      const hostname = new URL(url).hostname.toLowerCase();
+      (hostname === "search.codal.ir" ? searchGate : reportGate).defer(delayMs);
+    },
+  };
+}
+
+function createCachedTransport(cache, gate, requestOptions = {}, refreshPolicy = {}) {
+  const shouldRefresh = (url) => {
+    const isSearch = new URL(url).hostname.toLowerCase() === "search.codal.ir";
+    return isSearch ? refreshPolicy.search === true : refreshPolicy.reports === true;
+  };
+  const optionsFor = (url) => ({
+    ...requestOptions,
+    onRetry(event) {
+      gate.defer(url, event?.delayMs ?? 0);
+      requestOptions.onRetry?.(event);
+    },
+  });
   return {
     async json(url) {
-      const cached = await cache.getJson(url);
+      const cached = shouldRefresh(url) ? null : await cache.getJson(url);
       if (cached !== null) return cached;
-      await gate.wait();
-      const value = await requestJson(url);
+      await gate.wait(url);
+      const value = await requestJson(url, optionsFor(url));
       await cache.setJson(url, value);
       return value;
     },
     async text(url) {
-      const cached = await cache.getText(url, "html");
+      const cached = shouldRefresh(url) ? null : await cache.getText(url, "html");
       if (cached !== null) return cached;
-      await gate.wait();
-      const value = await requestText(url);
+      await gate.wait(url);
+      const value = await requestText(url, optionsFor(url));
       await cache.setText(url, value, "html");
       return value;
     },
@@ -322,44 +354,159 @@ export function summarizeCompanyStatuses(companies) {
   return summary;
 }
 
-async function processCompany({ company, client, months, definitions, asOf, allowPartial }) {
-  const from = months[0];
-  const reports = await client.searchMonthlyReports({
+async function resolveCompanyFiscalContext({ company, client, executionMonth, asOf, existingCompany }) {
+  const recentReports = await client.searchMonthlyReports({
     symbol: company.symbol,
-    fromDate: `${from.year}/01/01`,
+    fromDate: `${Number(asOf.year) - 2}/01/01`,
     toDate: formatAsOf(asOf),
     allPages: true,
   });
-  const latest = selectLatestCorrectionPerMonth(reports);
-  const latestByMonth = new Map();
-  for (const report of latest) {
-    const period = extractReportPeriod(report);
-    if (period) latestByMonth.set(monthKey(period), report);
+  let financialYears = Array.isArray(existingCompany?.financialYears)
+    ? existingCompany.financialYears
+    : [];
+  let fiscalYearEndMonth = Number(existingCompany?.fiscalYearEndMonth) || null;
+  let fiscalYearSource = fiscalYearEndMonth === null
+    ? "monthly-report-datasource"
+    : "stored-company";
+
+  for (const report of fiscalYearEndMonth === null ? recentReports.slice(0, 5) : []) {
+    try {
+      const datasource = await client.fetchReportDatasource(report);
+      const fiscalYearEnd = extractJalaliDate(datasource?.yearEndToDate);
+      if (fiscalYearEnd) {
+        fiscalYearEndMonth = fiscalYearEnd.month;
+        break;
+      }
+    } catch {
+      // Try another recent filing before using the fiscal-years endpoint.
+    }
   }
+
+  if (fiscalYearEndMonth === null && recentReports.length > 0) {
+    financialYears = await client.fetchFinancialYears(company.symbol);
+    fiscalYearEndMonth = resolveFiscalYearEndMonth(financialYears);
+    fiscalYearSource = "financial-years-api";
+  }
+
+  if (fiscalYearEndMonth === null) {
+    if (recentReports.length === 0) {
+      return {
+        noReports: true,
+        financialYears,
+        fiscalYearEndMonth: null,
+        fiscalYearStartMonth: null,
+        fiscalYearSource: "unavailable-no-monthly-reports",
+        definitions: null,
+        months: [],
+        requiredFromMonth: null,
+        requiredToMonth: null,
+      };
+    }
+    throw new Error(`No usable fiscal-year end date was returned by Codal for ${company.symbol}.`);
+  }
+
+  const definitions = getReportPeriods(executionMonth, { fiscalYearEndMonth });
+  const months = requiredMonths(definitions);
+  return {
+    financialYears,
+    fiscalYearEndMonth,
+    fiscalYearStartMonth: definitions.fiscalYearStartMonth,
+    fiscalYearSource,
+    definitions,
+    months,
+    reports: recentReports,
+    requiredFromMonth: months[0],
+    requiredToMonth: months.at(-1),
+  };
+}
+
+function reportIdentity(report) {
+  const value = report?.TracingNo ?? report?.tracingNo ?? report?.source?.tracingNo;
+  return value == null ? null : String(value);
+}
+
+async function processCompany({ company, client, context, asOf, allowPartial, existingCompany }) {
+  const {
+    definitions,
+    financialYears,
+    fiscalYearEndMonth,
+    fiscalYearStartMonth,
+    fiscalYearSource,
+    months,
+    requiredFromMonth,
+    requiredToMonth,
+    reports: preloadedReports,
+  } = context;
+  const from = months[0];
+  const reports = preloadedReports ?? await client.searchMonthlyReports({
+    symbol: company.symbol,
+    fromDate: `${monthKey(from)}/01`,
+    toDate: formatAsOf(asOf),
+    allPages: true,
+  });
+  const reportsByMonth = new Map();
+  for (const report of reports) {
+    const period = extractReportPeriod(report);
+    if (!period) continue;
+    const key = monthKey(period);
+    if (!reportsByMonth.has(key)) reportsByMonth.set(key, []);
+    reportsByMonth.get(key).push(report);
+  }
+  for (const candidates of reportsByMonth.values()) {
+    candidates.sort((left, right) => compareReportPriority(right, left));
+  }
+  const storedReportsByMonth = new Map(
+    (Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
+      .map((report) => [monthKey(report), report]),
+  );
   const monthlyReports = [];
   const errors = [];
-  const foundReportCount = months.filter((month) => latestByMonth.has(monthKey(month))).length;
+  let downloadedReportCount = 0;
+  let newOrChangedReportCount = 0;
+  const foundReportCount = months.filter((month) => reportsByMonth.has(monthKey(month))).length;
   const parsedMonths = await Promise.all(months.map(async (month) => {
-    const report = latestByMonth.get(monthKey(month));
-    if (!report) {
+    const candidates = reportsByMonth.get(monthKey(month)) ?? [];
+    const storedReport = storedReportsByMonth.get(monthKey(month)) ?? null;
+    if (!candidates.length) {
+      if (storedReport) return { report: storedReport, reused: true };
       return { kind: "missing", month, error: `گزارش ${monthKey(month)} یافت نشد` };
     }
-    try {
-      const parsed = await client.fetchAndParseReport(report);
-      const normalized = normalizeMonthlyReport(report, parsed);
-      return normalized
-        ? { report: normalized }
-        : { kind: "parse", month, error: `جدول تولید و فروش ${monthKey(month)} خوانده نشد` };
-    } catch (error) {
-      return { kind: "parse", month, error: `${monthKey(month)}: ${error.message}` };
+    const candidateErrors = [];
+    for (const report of candidates) {
+      if (storedReport && reportIdentity(report) === reportIdentity(storedReport)) {
+        return { report: storedReport, reused: true };
+      }
+      try {
+        const parsed = await client.fetchAndParseReport(report);
+        const normalized = normalizeMonthlyReport(report, parsed);
+        if (normalized) {
+          downloadedReportCount += 1;
+          if (reportIdentity(normalized) !== reportIdentity(storedReport)) {
+            newOrChangedReportCount += 1;
+          }
+          return { report: normalized };
+        }
+        candidateErrors.push(`tracing ${report.TracingNo ?? "?"}: table not found`);
+      } catch (error) {
+        candidateErrors.push(`tracing ${report.TracingNo ?? "?"}: ${error.message}`);
+      }
     }
+    return {
+      kind: "parse",
+      month,
+      error: `جدول تولید و فروش ${monthKey(month)} خوانده نشد (${candidateErrors.join(" | ")})`,
+    };
   }));
   for (const item of parsedMonths) {
     if (item.report) monthlyReports.push(item.report);
     if (item.error) errors.push(item.error);
   }
 
-  const calculated = buildSymbolPeriodMetrics(monthlyReports, definitions.executionMonth);
+  const calculated = buildSymbolPeriodMetrics(
+    monthlyReports,
+    definitions.executionMonth,
+    { fiscalYearEndMonth },
+  );
   const excelData = adaptPeriodResult(calculated, allowPartial);
   const parsedReportCount = monthlyReports.length;
   const missingReportCount = parsedMonths.filter((item) => item.kind === "missing").length;
@@ -373,6 +520,13 @@ async function processCompany({ company, client, months, definitions, asOf, allo
   return {
     ...company,
     ...excelData,
+    definitions,
+    financialYears,
+    fiscalYearEndMonth,
+    fiscalYearStartMonth,
+    fiscalYearSource,
+    requiredFromMonth,
+    requiredToMonth,
     status,
     errors,
     sources: monthlyReports.map((report) => ({
@@ -380,7 +534,12 @@ async function processCompany({ company, client, months, definitions, asOf, allo
       month: report.month,
       ...report.source,
     })),
-    downloadedReportCount: parsedReportCount,
+    monthlyReports,
+    downloadedReportCount,
+    newOrChangedReportCount,
+    updateAction: existingCompany && newOrChangedReportCount === 0
+      ? "unchanged"
+      : "updated",
     foundReportCount,
     parsedReportCount,
     missingReportCount,
@@ -417,42 +576,125 @@ function buildIndustryGroups(companies, industries) {
     .sort((left, right) => left.industryName.localeCompare(right.industryName, "fa"));
 }
 
-export async function runMonthlyReport(options = {}) {
+export async function collectMonthlyReportData(options = {}, dependencies = {}) {
   const asOf = parseAsOf(options.asOf);
   const definitions = getReportPeriods({ year: asOf.year, month: asOf.month });
-  const months = requiredMonths(definitions);
-  const cache = new DiskCache(options.cacheDir ?? path.resolve(".cache/codal"), {
-    refresh: options.refresh,
-  });
-  const gate = new StartIntervalGate(options.requestDelayMs ?? 500);
-  const transport = createCachedTransport(cache, gate);
-  const client = new CodalClient({
-    fetchJson: transport.json,
-    fetchText: transport.text,
-    retries: 2,
-  });
+  const log = resolveLogger(options.logger);
+  const asOfLabel = formatAsOf(asOf);
+  const targetMonthLabel = monthKey(definitions.targetMonth);
+  let client = dependencies.client ?? options.client ?? null;
+  if (!client) {
+    const cache = new DiskCache(options.cacheDir ?? path.resolve(".cache/codal"), {
+      refresh: false,
+    });
+    const gate = createCodalRequestGate(options.requestDelayMs ?? 500);
+    const refreshAll = options.refresh === true;
+    const transport = createCachedTransport(cache, gate, {
+      retries: options.requestRetries ?? 4,
+      retryDelayMs: options.retryDelayMs ?? 1_000,
+      timeoutMs: options.timeoutMs ?? 60_000,
+    }, {
+      search: options.refreshSearch ?? refreshAll,
+      reports: options.refreshReports ?? refreshAll,
+    });
+    client = new CodalClient({
+      fetchJson: transport.json,
+      fetchText: transport.text,
+      retries: options.requestRetries ?? 4,
+      timeoutMs: options.timeoutMs ?? 60_000,
+    });
+  }
 
-  console.log(`Run date: ${formatAsOf(asOf)} | Target month: ${monthKey(definitions.targetMonth)}`);
-  console.log("Fetching manufacturing-company and industry lists...");
+  await emitProgress(options.onProgress, {
+    type: "run-start",
+    asOf: asOfLabel,
+    targetMonth: targetMonthLabel,
+  });
+  log(`Run date: ${asOfLabel} | Target month: ${targetMonthLabel}`);
+  log("Fetching manufacturing-company and industry lists...");
   const [rawCompanies, industries] = await Promise.all([
     client.fetchProductionCompanies(),
     client.fetchIndustries(),
   ]);
+  const companyCatalogCount = selectCompanies(rawCompanies, { allSymbols: true }).length;
   const companies = selectCompanies(rawCompanies, options);
+  const existingBySymbol = new Map(
+    (Array.isArray(options.existingCompanies) ? options.existingCompanies : [])
+      .map((company) => [normalizeCodalText(company?.symbol), company]),
+  );
 
-  console.log(`Selected companies: ${companies.length} | Required months: ${months.length}`);
+  await emitProgress(options.onProgress, {
+    type: "companies-selected",
+    companyCount: companies.length,
+  });
+  log(`Selected companies: ${companies.length} | Fiscal report windows are resolved per company.`);
+  const generatedAtValue = typeof dependencies.now === "function"
+    ? dependencies.now()
+    : new Date();
+  const metadata = {
+    asOf: asOfLabel,
+    executionMonth: definitions.executionMonth,
+    targetMonth: definitions.targetMonth,
+    definitions,
+    allowPartial: options.allowPartial ?? false,
+    companyCatalogCount,
+    sourceUrl: "https://www.codal.ir/",
+    generatedAt: new Date(generatedAtValue).toISOString(),
+  };
   let completed = 0;
   const processed = await runPool(companies, options.concurrency ?? 2, async (company) => {
     let result;
+    let context = null;
+    const existingCompany = existingBySymbol.get(normalizeCodalText(company.symbol)) ?? null;
     try {
-      result = await processCompany({
+      context = await resolveCompanyFiscalContext({
         company,
         client,
-        months,
-        definitions,
+        executionMonth: definitions.executionMonth,
         asOf,
-        allowPartial: options.allowPartial ?? false,
+        existingCompany,
       });
+      result = context.noReports
+        ? existingCompany
+          ? {
+              ...existingCompany,
+              downloadedReportCount: 0,
+              newOrChangedReportCount: 0,
+              updateAction: "unchanged",
+            }
+          : {
+            ...company,
+            periods: {},
+            growth: {},
+            status: "بدون داده",
+            errors: ["هیچ گزارش فعالیت ماهانه‌ای برای این نماد در کدال یافت نشد."],
+            sources: [],
+            downloadedReportCount: 0,
+            foundReportCount: 0,
+            parsedReportCount: 0,
+            missingReportCount: 0,
+            parseFailureCount: 0,
+            requiredReportCount: 0,
+            coverageRatio: 0,
+            monthlyReports: [],
+            newOrChangedReportCount: 0,
+            updateAction: "updated",
+            definitions: null,
+            financialYears: context.financialYears,
+            fiscalYearEndMonth: null,
+            fiscalYearStartMonth: null,
+            fiscalYearSource: context.fiscalYearSource,
+            requiredFromMonth: null,
+            requiredToMonth: null,
+          }
+        : await processCompany({
+            company,
+            client,
+            context,
+            asOf,
+            allowPartial: options.allowPartial ?? false,
+            existingCompany,
+          });
     } catch (error) {
       result = {
         ...company,
@@ -464,49 +706,110 @@ export async function runMonthlyReport(options = {}) {
         downloadedReportCount: 0,
         foundReportCount: 0,
         parsedReportCount: 0,
-        missingReportCount: months.length,
+        missingReportCount: context?.months.length ?? 0,
         parseFailureCount: 0,
-        requiredReportCount: months.length,
+        requiredReportCount: context?.months.length ?? 0,
         coverageRatio: 0,
+        monthlyReports: existingCompany?.monthlyReports ?? [],
+        newOrChangedReportCount: 0,
+        updateAction: "error",
+        definitions: context?.definitions,
+        financialYears: context?.financialYears ?? [],
+        fiscalYearEndMonth: context?.fiscalYearEndMonth ?? null,
+        fiscalYearStartMonth: context?.fiscalYearStartMonth ?? null,
+        fiscalYearSource: context?.fiscalYearSource ?? null,
+        requiredFromMonth: context?.requiredFromMonth ?? null,
+        requiredToMonth: context?.requiredToMonth ?? null,
       };
     }
+    const [industryGroup] = buildIndustryGroups([result], industries);
+    await emitProgress(options.onCompanyResult, {
+      type: "company-result",
+      company: result,
+      industryGroup,
+      metadata,
+    });
     completed += 1;
-    console.log(
+    const progressEvent = {
+      type: "company-complete",
+      completed,
+      total: companies.length,
+      symbol: company.symbol,
+      status: result.status,
+      updateAction: result.updateAction,
+      newOrChangedReportCount: result.newOrChangedReportCount ?? 0,
+      statusLabel: formatCompanyStatusForConsole(result.status),
+      parsedReportCount: result.parsedReportCount ?? 0,
+      requiredReportCount: result.requiredReportCount ?? 0,
+      fiscalYearEndMonth: result.fiscalYearEndMonth,
+      fiscalYearStartMonth: result.fiscalYearStartMonth,
+      requiredFromMonth: result.requiredFromMonth,
+      requiredToMonth: result.requiredToMonth,
+    };
+    await emitProgress(options.onProgress, progressEvent);
+    const fiscalWindow = result.requiredFromMonth && result.requiredToMonth
+      ? `fiscal end ${String(result.fiscalYearEndMonth).padStart(2, "0")}; `
+        + `window ${monthKey(result.requiredFromMonth)}-${monthKey(result.requiredToMonth)}`
+      : "fiscal window unavailable";
+    log(
       `[${completed}/${companies.length}] ${formatCompanySymbolForConsole(company.symbol, completed)}: `
-      + `${formatCompanyStatusForConsole(result.status)} `
-      + `(${result.parsedReportCount ?? 0}/${result.requiredReportCount ?? months.length} reports parsed)`,
+      + `${progressEvent.statusLabel} `
+      + `(${progressEvent.parsedReportCount}/${progressEvent.requiredReportCount} reports parsed; `
+      + `${fiscalWindow})`,
     );
+    const companyDelayMs = Math.max(0, Number(options.companyDelayMs) || 0);
+    if (completed < companies.length && companyDelayMs > 0) {
+      await emitProgress(options.onProgress, {
+        type: "company-delay",
+        completed,
+        total: companies.length,
+        delayMs: companyDelayMs,
+      });
+      await sleep(companyDelayMs);
+    }
     return result;
   });
 
   const industryGroups = buildIndustryGroups(processed, industries);
-  const outputPath = path.resolve(
-    options.outputPath
-      ?? `outputs/monthly-manufacturing-${monthKey(definitions.targetMonth).replace("/", "-")}.xlsx`,
-  );
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await writeReportWorkbook({
-    industryGroups,
-    metadata: {
-      asOf: formatAsOf(asOf),
-      executionMonth: definitions.executionMonth,
-      targetMonth: definitions.targetMonth,
-      definitions,
-      allowPartial: options.allowPartial ?? false,
-      sourceUrl: "https://www.codal.ir/",
-      generatedAt: new Date().toISOString(),
-    },
-    outputPath,
-  });
-
   const statusSummary = summarizeCompanyStatuses(processed);
+  metadata.updateMode = existingBySymbol.size > 0 ? "incremental" : "initial";
+  metadata.updatedCompanyCount = processed.filter((company) => company.updateAction !== "unchanged").length;
+  metadata.unchangedCompanyCount = processed.filter((company) => company.updateAction === "unchanged").length;
   const successCount = statusSummary.completeCount + statusSummary.partialCount;
-  return {
-    outputPath,
+  const result = {
+    metadata,
+    industryGroups,
     successCount,
     failureCount: processed.length - successCount,
     industryCount: industryGroups.length,
     companies: processed,
     ...statusSummary,
+  };
+  await emitProgress(options.onProgress, {
+    type: "run-complete",
+    companyCount: processed.length,
+    industryCount: industryGroups.length,
+    successCount: result.successCount,
+    failureCount: result.failureCount,
+    ...statusSummary,
+  });
+  return result;
+}
+
+export async function runMonthlyReport(options = {}, dependencies = {}) {
+  const data = await collectMonthlyReportData(options, dependencies);
+  const outputPath = path.resolve(
+    options.outputPath
+      ?? `outputs/monthly-manufacturing-${monthKey(data.metadata.targetMonth).replace("/", "-")}.xlsx`,
+  );
+  const workbookWriter = dependencies.writeReportWorkbook ?? writeReportWorkbook;
+  await workbookWriter({
+    industryGroups: data.industryGroups,
+    metadata: data.metadata,
+    outputPath,
+  });
+  return {
+    ...data,
+    outputPath,
   };
 }

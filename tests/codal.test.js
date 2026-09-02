@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import {
   CodalClient,
   PRODUCTION_REPORTING_TYPE,
+  extractCodalDatasource,
   extractReportPeriod,
+  normalizeFinancialYears,
   parseCodalNumber,
   parseHtmlTables,
   parseProductionSalesReport,
+  resolveFiscalYearEndMonth,
   selectLatestCorrectionPerMonth,
   selectLatestReportForMonth,
 } from '../src/codal.js';
@@ -82,6 +85,65 @@ test('production parser detects monthly/YTD periods and aggregates repeated prod
   assert.equal(parsed.monthly.totals.compatibleUnits, false);
   assert.equal(parsed.monthly.totals.unitsCompatible, false);
   assert.match(parsed.warnings.join(' '), /units differ/);
+});
+
+test('production parser recovers tables from Codal embedded datasource pages', async () => {
+  const sourceTable = parseHtmlTables(productionSalesHtml)[0];
+  const cells = [
+    ...sourceTable.headerRows.flatMap((row, rowIndex) => row.map((value, columnIndex) => ({
+      rowSequence: rowIndex + 1,
+      columnSequence: columnIndex + 1,
+      rowSpan: 1,
+      colSpan: 1,
+      cellGroupName: 'Header',
+      isVisible: true,
+      value,
+    }))),
+    ...sourceTable.rows.flatMap((row, rowIndex) => row.map((value, columnIndex) => ({
+      rowSequence: rowIndex + sourceTable.headerRows.length + 1,
+      columnSequence: columnIndex + 1,
+      rowSpan: 1,
+      colSpan: 1,
+      cellGroupName: 'Body',
+      isVisible: true,
+      value,
+    }))),
+  ];
+  const datasource = {
+    yearEndToDate: '1405/12/29',
+    sheets: [{
+      tables: [{
+        title_Fa: 'تولید و فروش',
+        description: 'کلیه مبالغ به میلیون ریال است',
+        aliasName: 'ProductionAndSales',
+        cells,
+      }],
+    }],
+  };
+  const embeddedHtml = `<script>var datasource = ${JSON.stringify(datasource)};</script>`;
+
+  assert.equal(extractCodalDatasource(embeddedHtml).yearEndToDate, '1405/12/29');
+  const parsed = parseProductionSalesReport(embeddedHtml);
+  assert.equal(parsed.tableFound, true);
+  assert.equal(parsed.monthly.date.value, '1405/05/31');
+  assert.equal(parsed.monthly.dominantProduct.name, 'محصول الف');
+
+  const requests = [];
+  const client = new CodalClient({
+    fetchText: async (url) => {
+      requests.push(url);
+      return url.includes('excel.codal.ir') ? '<html>گزارش فعالیت ماهانه</html>' : embeddedHtml;
+    },
+  });
+  const recovered = await client.fetchAndParseReport({
+    ExcelUrl: 'https://excel.codal.ir/empty',
+    Url: '/Reports/Decision.aspx?id=1',
+  });
+  assert.equal(recovered.monthly.date.value, '1405/05/31');
+  assert.deepEqual(requests, [
+    'https://excel.codal.ir/empty',
+    'https://www.codal.ir/Reports/Decision.aspx?id=1',
+  ]);
 });
 
 test('weighted total rate is calculated when all units are compatible', () => {
@@ -180,6 +242,49 @@ test('latest correction is selected for each symbol and Jalali month', () => {
   assert.deepEqual(extractReportPeriod(reports[0]), {
     year: 1404, month: 9, day: 30, key: '1404/09', value: '1404/09/30',
   });
+});
+
+test('financial-year dates are normalized and the latest fiscal end month is resolved', () => {
+  const values = [
+    '۱۴۰۳/۱۲/۲۹',
+    ' 1404-06-31 ',
+    '١٤٠٢/٠٩/٣٠',
+    '1404/06/31',
+    '1404/07/31',
+    'not-a-date',
+    null,
+  ];
+
+  assert.deepEqual(normalizeFinancialYears(values), [
+    '1403/12/29',
+    '1404/06/31',
+    '1402/09/30',
+  ]);
+  assert.equal(resolveFiscalYearEndMonth(values), 6);
+  assert.equal(resolveFiscalYearEndMonth(['invalid']), null);
+  assert.throws(() => normalizeFinancialYears({}), /must be an array/);
+});
+
+test('CodalClient fetches URL-encoded financial years through an injected transport', async () => {
+  const requested = [];
+  const client = new CodalClient({
+    searchBaseUrl: 'https://search.codal.ir/',
+    fetchJson: async (url) => {
+      requested.push(url);
+      return ['۱۴۰۴/۱۲/۲۹', '1403-12-29', 'invalid'];
+    },
+    retries: 0,
+  });
+
+  assert.deepEqual(await client.fetchFinancialYears('فولاد & شرکت'), [
+    '1404/12/29',
+    '1403/12/29',
+  ]);
+  assert.equal(requested.length, 1);
+  assert.equal(new URL(requested[0]).pathname, '/api/search/v1/financialYears');
+  assert.equal(new URL(requested[0]).searchParams.get('Symbol'), 'فولاد & شرکت');
+  assert.equal(requested[0].includes('فولاد'), false);
+  await assert.rejects(() => client.fetchFinancialYears('  '), /symbol is required/i);
 });
 
 test('CodalClient supports injected transports, production filtering and pagination', async () => {

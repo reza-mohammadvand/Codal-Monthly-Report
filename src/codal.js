@@ -3,6 +3,7 @@ import https from 'node:https';
 
 export const CODAL_SEARCH_BASE_URL = 'https://search.codal.ir';
 export const CODAL_EXCEL_BASE_URL = 'https://excel.codal.ir';
+export const CODAL_BASE_URL = 'https://www.codal.ir';
 export const PRODUCTION_REPORTING_TYPE = 1_000_000;
 
 const DEFAULT_HEADERS = Object.freeze({
@@ -186,6 +187,91 @@ export function parseHtmlTables(html) {
   return tables;
 }
 
+/** Extract the JSON object embedded in Codal's `var datasource = {...}` pages. */
+export function extractCodalDatasource(html) {
+  const source = String(html ?? '');
+  const marker = /\bvar\s+datasource\s*=\s*/i.exec(source);
+  if (!marker) return null;
+  const start = marker.index + marker[0].length;
+  if (source[start] !== '{') return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(source.slice(start, index + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderDatasourceRows(cells, tagName) {
+  const rows = new Map();
+  for (const cell of cells) {
+    if (cell?.isVisible === false) continue;
+    const sequence = Number(cell?.rowSequence ?? cell?.rowCode ?? 0);
+    if (!rows.has(sequence)) rows.set(sequence, []);
+    rows.get(sequence).push(cell);
+  }
+  return [...rows.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, rowCells]) => {
+      const rendered = rowCells
+        .sort((left, right) => Number(left?.columnSequence ?? left?.columnCode ?? 0)
+          - Number(right?.columnSequence ?? right?.columnCode ?? 0))
+        .map((cell) => {
+          const rowSpan = Math.max(1, Number(cell?.rowSpan) || 1);
+          const colSpan = Math.max(1, Number(cell?.colSpan) || 1);
+          return `<${tagName} rowspan="${rowSpan}" colspan="${colSpan}">${escapeHtml(cell?.value)}</${tagName}>`;
+        })
+        .join('');
+      return `<tr>${rendered}</tr>`;
+    })
+    .join('');
+}
+
+function renderDatasourceTables(datasource) {
+  const tables = (datasource?.sheets ?? []).flatMap((sheet) => sheet?.tables ?? []);
+  return tables.map((table) => {
+    const cells = Array.isArray(table?.cells) ? table.cells : [];
+    const headerCells = cells.filter((cell) => /header/i.test(String(cell?.cellGroupName ?? '')));
+    const bodyCells = cells.filter((cell) => !/header/i.test(String(cell?.cellGroupName ?? '')));
+    return `<section><h2>${escapeHtml(table?.title_Fa ?? table?.title_En ?? table?.aliasName)}</h2>`
+      + `<p>${escapeHtml(table?.description)}</p><table data-alias="${escapeHtml(table?.aliasName)}">`
+      + `<thead>${renderDatasourceRows(headerCells, 'th')}</thead>`
+      + `<tbody>${renderDatasourceRows(bodyCells, 'td')}</tbody></table></section>`;
+  }).join('');
+}
+
 function pad2(number) {
   return String(number).padStart(2, '0');
 }
@@ -206,6 +292,46 @@ export function extractJalaliDate(value) {
     key: `${year}/${pad2(month)}`,
     value: `${year}/${pad2(month)}/${pad2(day)}`,
   };
+}
+
+/**
+ * Validate and normalize Codal financial-year end dates.
+ *
+ * Codal may return Persian or Arabic digits and either slash or dash separators.
+ * Invalid values are ignored, duplicates are removed, and the API order is kept.
+ */
+export function normalizeFinancialYears(values) {
+  if (!Array.isArray(values)) {
+    throw new TypeError('Codal financial years must be an array.');
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const match = toAsciiDigits(value).trim().match(/^((?:13|14)\d{2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{1,2})$/);
+    if (!match) continue;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const maximumDay = month <= 6 ? 31 : 30;
+    if (month < 1 || month > 12 || day < 1 || day > maximumDay) continue;
+
+    const date = `${year}/${pad2(month)}/${pad2(day)}`;
+    if (!seen.has(date)) {
+      seen.add(date);
+      normalized.push(date);
+    }
+  }
+  return normalized;
+}
+
+/** Return the month of the latest valid financial-year end date, or null. */
+export function resolveFiscalYearEndMonth(values) {
+  const dates = normalizeFinancialYears(values);
+  if (!dates.length) return null;
+  return Number([...dates].sort().at(-1).split('/')[1]);
 }
 
 export function extractReportPeriod(report) {
@@ -240,7 +366,7 @@ function reportTimestamp(report) {
   return digits;
 }
 
-function compareReportPriority(left, right) {
+export function compareReportPriority(left, right) {
   const correctionDifference = Number(isCorrectionReport(left)) - Number(isCorrectionReport(right));
   if (correctionDifference) return correctionDifference;
   const timestampDifference = reportTimestamp(left).localeCompare(reportTimestamp(right));
@@ -582,7 +708,9 @@ function parsePeriod(table, columns, set, revenueMultiplier) {
  * calculated rates are returned in rials per reported quantity unit.
  */
 export function parseProductionSalesReport(html) {
-  const tables = parseHtmlTables(html);
+  const datasource = extractCodalDatasource(html);
+  const embeddedTables = datasource ? parseHtmlTables(renderDatasourceTables(datasource)) : [];
+  const tables = [...parseHtmlTables(html), ...embeddedTables];
   const ranked = tables
     .map((table) => ({ table, score: tableScore(table) }))
     .sort((left, right) => right.score - left.score);
@@ -821,6 +949,19 @@ export class CodalClient {
     return Array.isArray(payload) ? payload : (payload?.Industries ?? payload?.industryGroups ?? []);
   }
 
+  async fetchFinancialYears(symbol) {
+    const normalizedSymbol = String(symbol ?? '').trim();
+    if (!normalizedSymbol) throw new TypeError('A symbol is required to fetch financial years.');
+
+    const parameters = new URLSearchParams({ Symbol: normalizedSymbol });
+    const url = `${this.searchBaseUrl}/api/search/v1/financialYears?${parameters}`;
+    const payload = await this.getJson(url);
+    const values = Array.isArray(payload)
+      ? payload
+      : (payload?.FinancialYears ?? payload?.financialYears);
+    return normalizeFinancialYears(values);
+  }
+
   async searchMonthlyReportPage(options = {}) {
     const parameters = buildSearchParameters(options);
     const url = `${this.searchBaseUrl}/api/search/v2/q?${parameters}`;
@@ -849,12 +990,49 @@ export class CodalClient {
   async fetchReportHtml(reportOrUrl) {
     const url = typeof reportOrUrl === 'string'
       ? reportOrUrl
-      : reportOrUrl?.ExcelUrl ?? reportOrUrl?.excelUrl;
+      : reportOrUrl?.ExcelUrl ?? reportOrUrl?.excelUrl
+        ?? reportOrUrl?.Url ?? reportOrUrl?.url;
     if (!url) throw new TypeError('The report does not contain an ExcelUrl.');
-    return this.getText(new URL(url, this.searchBaseUrl).toString());
+    const baseUrl = typeof reportOrUrl === 'string' || reportOrUrl?.ExcelUrl || reportOrUrl?.excelUrl
+      ? this.searchBaseUrl
+      : CODAL_BASE_URL;
+    return this.getText(new URL(url, baseUrl).toString());
+  }
+
+  async fetchReportDatasource(report) {
+    const url = report?.Url ?? report?.url;
+    if (!url) return null;
+    const html = await this.getText(new URL(url, CODAL_BASE_URL).toString());
+    return extractCodalDatasource(html);
   }
 
   async fetchAndParseReport(reportOrUrl) {
-    return parseProductionSalesReport(await this.fetchReportHtml(reportOrUrl));
+    if (typeof reportOrUrl === 'string') {
+      return parseProductionSalesReport(await this.fetchReportHtml(reportOrUrl));
+    }
+
+    const candidates = [
+      reportOrUrl?.ExcelUrl ?? reportOrUrl?.excelUrl,
+      reportOrUrl?.Url ?? reportOrUrl?.url,
+    ].filter(Boolean);
+    let lastParsed = null;
+    let lastError = null;
+    for (const candidate of [...new Set(candidates)]) {
+      const baseUrl = candidate === (reportOrUrl?.Url ?? reportOrUrl?.url)
+        ? CODAL_BASE_URL
+        : this.searchBaseUrl;
+      try {
+        const parsed = parseProductionSalesReport(
+          await this.getText(new URL(candidate, baseUrl).toString()),
+        );
+        if (parsed.monthly) return parsed;
+        lastParsed = parsed;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastParsed) return lastParsed;
+    if (lastError) throw lastError;
+    throw new TypeError('The report does not contain a usable HTML or Excel URL.');
   }
 }

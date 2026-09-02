@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import ExcelJS from 'exceljs';
 
-import { createReportWorkbook } from '../src/excel.js';
+import { createReportWorkbook, excelReportSchema } from '../src/excel.js';
 
 function period(multiplier, { dominantRate = 2_000_000 } = {}) {
   return {
@@ -41,18 +41,23 @@ test('Excel report serializes with a compact layout and auditable growth formula
           target: period(2, { dominantRate: null }),
           currentYtd: period(4),
         },
-        comparisonPeriods: { previousMonthPriorYear: period(2) },
+        growth: {
+          monthOverMonth: {
+            totalProduction: -0.5,
+            totalSales: null,
+          },
+        },
       }],
     }],
     metadata: {
       generatedAt: '2026-08-29T08:00:00.000Z',
       periodLabels: {
         priorTarget: 'مرداد 1404',
-        priorYtd: 'میانگین تا مرداد 1404',
-        priorAnnual: 'میانگین 12 ماهه 1404',
+        priorYtd: 'میانگین از ابتدای سال مالی تا مرداد 1404',
+        priorAnnual: 'میانگین ۱۲ ماهه سال مالی قبل',
         previous: 'تیر 1405',
         target: 'مرداد 1405',
-        currentYtd: 'میانگین تا مرداد 1405',
+        currentYtd: 'میانگین از ابتدای سال مالی تا مرداد 1405',
       },
     },
   });
@@ -85,7 +90,7 @@ test('Excel report serializes with a compact layout and auditable growth formula
   assert.equal(sheet.views[0].rightToLeft, true);
   assert.equal(sheet.views[0].xSplit, 3);
   assert.equal(sheet.rowCount, 10);
-  assert.equal(sheet.getColumn(15).hidden, true);
+  assert.equal(sheet.columnCount, 14);
   assert.ok(!sheet.autoFilter);
   assert.ok(sheet.model.merges.includes('A5:A10'));
   assert.ok(sheet.model.merges.includes('B5:B10'));
@@ -96,9 +101,21 @@ test('Excel report serializes with a compact layout and auditable growth formula
   assert.equal(sheet.getCell('E8').value, 'محصول الف');
   assert.equal(sheet.getCell('E9').master.address, 'E8');
   assert.equal(sheet.getCell('C10').value, 'نرخ فروش موزون کل');
+  assert.equal(sheet.getCell('G4').value, 'میانگین سال مالی تا\nمرداد 1404');
+  assert.equal(sheet.getCell('H4').value, 'میانگین ۱۲ماهه\nسال مالی قبل');
+  assert.equal(sheet.getCell('K4').value, 'میانگین سال مالی تا\nمرداد 1405');
+  assert.equal(sheet.getCell('N4').value, 'رشد ماه مبنا\nنسبت به ماه قبل');
   assert.equal(sheet.getCell('L5').value.formula, 'IF(OR(F5="",F5=0,J5=""),"",J5/F5-1)');
   assert.equal(sheet.getCell('M5').value.formula, 'IF(OR(G5="",G5=0,K5=""),"",K5/G5-1)');
-  assert.equal(sheet.getCell('N5').value.formula, 'IF(OR(O5="",O5=0,I5=""),"",I5/O5-1)');
-  assert.equal(sheet.getCell('O5').value, 20);
+  assert.equal(sheet.getCell('N5').value.formula, 'IF(OR(I5="",I5=0,J5=""),"",J5/I5-1)');
+  assert.equal(sheet.getCell('N5').value.result, -0.5);
+  assert.equal(sheet.getCell('N6').value, null);
   assert.equal(sheet.getCell('L9').value, null);
+  assert.equal(sheet.getCell('F5').numFmt, '#,##0;[Red](#,##0);-');
+  assert.equal(sheet.getCell('F6').numFmt, '#,##0;[Red](#,##0);-');
+  assert.equal(sheet.getCell('F8').numFmt, '#,##0;[Red](#,##0);-');
+  assert.deepEqual(excelReportSchema.growth[2], {
+    key: 'targetMoM',
+    aliases: ['targetMoM', 'monthOverMonth'],
+  });
 });

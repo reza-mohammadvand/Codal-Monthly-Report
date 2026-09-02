@@ -7,10 +7,12 @@
   "main": "src/cli.js",
   "scripts": {
     "start": "node src/cli.js",
-    "pilot": "node src/cli.js --output=outputs/pilot-three-symbols.xlsx",
+    "pilot": "node src/cli.js --output=outputs/pilot-four-symbols.xlsx",
     "sample": "npm run pilot",
+    "web": "node --disable-warning=ExperimentalWarning src/web/server.js",
+    "bulk-update": "node --disable-warning=ExperimentalWarning src/bulk-update.js",
     "test": "node --test",
-    "check": "node --check src/cli.js"
+    "check": "node --check src/cli.js && node --check src/bulk-update.js && node --check src/codal.js && node --check src/pipeline.js && node --check src/web/server.js && node --check src/web/service.js && node --check src/web/public/app.js"
   },
   "engines": {
     "node": ">=22"

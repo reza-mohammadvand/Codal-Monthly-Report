@@ -115,21 +115,58 @@ export function jalaliYearMonths(year, endMonth = 12, startMonth = 1) {
   );
 }
 
+function validateFiscalYearEndMonth(value) {
+  const month = Number(value ?? 12);
+  assertInteger(month, 'fiscalYearEndMonth');
+  if (month < 1 || month > 12) {
+    throw new RangeError('fiscalYearEndMonth must be between 1 and 12');
+  }
+  return month;
+}
+
+function monthsFromStartToEnd(startValue, endValue) {
+  const start = normalizeJalaliMonth(startValue);
+  const end = normalizeJalaliMonth(endValue);
+  const startIndex = (start.year - 1) * 12 + start.month - 1;
+  const endIndex = (end.year - 1) * 12 + end.month - 1;
+  if (endIndex < startIndex) {
+    throw new RangeError('period end must not be before period start');
+  }
+
+  return Array.from(
+    { length: endIndex - startIndex + 1 },
+    (_, index) => addJalaliMonths(start, index),
+  );
+}
+
+function fiscalYearStartForMonth(value, fiscalYearEndMonth) {
+  const month = normalizeJalaliMonth(value);
+  const startMonth = fiscalYearEndMonth === 12 ? 1 : fiscalYearEndMonth + 1;
+  return {
+    year: startMonth === 1 || month.month >= startMonth
+      ? month.year
+      : month.year - 1,
+    month: startMonth,
+  };
+}
+
 /**
  * Defines the six displayed value periods and the three growth comparisons.
- * The target month is always one month before the execution month.
+ * The target month is always one month before the execution month. YTD periods
+ * follow the company's fiscal year, which defaults to ending in Esfand.
  */
-export function getReportPeriods(executionMonth) {
+export function getReportPeriods(executionMonth, options = {}) {
   const execution = normalizeJalaliMonth(executionMonth);
+  const fiscalYearEndMonth = validateFiscalYearEndMonth(options.fiscalYearEndMonth);
   const target = previousJalaliMonth(execution);
-  const priorYearTarget = { year: target.year - 1, month: target.month };
+  const priorYearTarget = addJalaliMonths(target, -12);
   const previousMonth = previousJalaliMonth(target);
-  const previousMonthPriorYear = {
-    year: previousMonth.year - 1,
-    month: previousMonth.month,
-  };
+  const currentFiscalYearStart = fiscalYearStartForMonth(target, fiscalYearEndMonth);
+  const priorFiscalYearStart = addJalaliMonths(currentFiscalYearStart, -12);
+  const previousFullFiscalYearStart = priorFiscalYearStart;
+  const previousFullFiscalYearEnd = previousJalaliMonth(currentFiscalYearStart);
 
-  if (priorYearTarget.year < 1 || previousMonthPriorYear.year < 1) {
+  if (priorYearTarget.year < 1 || priorFiscalYearStart.year < 1) {
     throw new RangeError('execution month is too early to build prior-year comparisons');
   }
 
@@ -142,14 +179,17 @@ export function getReportPeriods(executionMonth) {
     },
     priorYearYtdAverage: {
       key: 'priorYearYtdAverage',
-      label: `میانگین فروردین تا ${formatJalaliMonth(priorYearTarget)}`,
-      months: jalaliYearMonths(priorYearTarget.year, priorYearTarget.month),
+      label: `میانگین از ابتدای سال مالی تا ${formatJalaliMonth(priorYearTarget)}`,
+      months: monthsFromStartToEnd(priorFiscalYearStart, priorYearTarget),
       aggregation: 'average',
     },
     priorYearFullYearAverage: {
       key: 'priorYearFullYearAverage',
-      label: `میانگین ۱۲ ماهه ${priorYearTarget.year}`,
-      months: jalaliYearMonths(priorYearTarget.year),
+      label: 'میانگین ۱۲ ماهه سال مالی قبل',
+      months: monthsFromStartToEnd(
+        previousFullFiscalYearStart,
+        previousFullFiscalYearEnd,
+      ),
       aggregation: 'average',
     },
     previousMonth: {
@@ -166,8 +206,8 @@ export function getReportPeriods(executionMonth) {
     },
     currentYearYtdAverage: {
       key: 'currentYearYtdAverage',
-      label: `میانگین فروردین تا ${formatJalaliMonth(target)}`,
-      months: jalaliYearMonths(target.year, target.month),
+      label: `میانگین از ابتدای سال مالی تا ${formatJalaliMonth(target)}`,
+      months: monthsFromStartToEnd(currentFiscalYearStart, target),
       aggregation: 'average',
     },
   };
@@ -181,16 +221,15 @@ export function getReportPeriods(executionMonth) {
     },
     ytdYoY: {
       key: 'ytdYoY',
-      label: `رشد میانگین سال ${target.year} نسبت به ${priorYearTarget.year}`,
+      label: 'رشد میانگین سال مالی جاری نسبت به دوره مشابه سال مالی قبل',
       numerator: 'currentYearYtdAverage',
       denominator: 'priorYearYtdAverage',
     },
-    previousMonthYoY: {
-      key: 'previousMonthYoY',
-      label: `رشد ${formatJalaliMonth(previousMonth)} نسبت به ${formatJalaliMonth(previousMonthPriorYear)}`,
-      numerator: 'previousMonth',
-      denominator: 'previousMonthPriorYear',
-      denominatorMonths: [previousMonthPriorYear],
+    targetMoM: {
+      key: 'targetMoM',
+      label: `رشد ${formatJalaliMonth(target)} نسبت به ${formatJalaliMonth(previousMonth)}`,
+      numerator: 'targetMonth',
+      denominator: 'previousMonth',
     },
   };
 
@@ -199,7 +238,12 @@ export function getReportPeriods(executionMonth) {
     targetMonth: target,
     priorYearTargetMonth: priorYearTarget,
     previousMonth,
-    previousMonthPriorYear,
+    fiscalYearEndMonth,
+    fiscalYearStartMonth: currentFiscalYearStart.month,
+    currentFiscalYearStart,
+    priorFiscalYearStart,
+    previousFullFiscalYearStart,
+    previousFullFiscalYearEnd,
     periods,
     growth,
     columnOrder: [
@@ -211,7 +255,7 @@ export function getReportPeriods(executionMonth) {
       'currentYearYtdAverage',
       'targetYoY',
       'ytdYoY',
-      'previousMonthYoY',
+      'targetMoM',
     ],
   };
 }
@@ -451,7 +495,7 @@ export function calculateMetricGrowth(currentMetrics, baselineMetrics) {
 
 /** Build all six value columns and all three growth columns for one symbol. */
 export function buildSymbolPeriodMetrics(monthlyReports, executionMonth, options = {}) {
-  const definitions = getReportPeriods(executionMonth);
+  const definitions = getReportPeriods(executionMonth, options);
   const periodValues = {};
 
   for (const definition of Object.values(definitions.periods)) {
@@ -465,12 +509,6 @@ export function buildSymbolPeriodMetrics(monthlyReports, executionMonth, options
     );
   }
 
-  const previousMonthPriorYear = aggregatePeriod(
-    monthlyReports,
-    [definitions.previousMonthPriorYear],
-    { ...options, average: false },
-  );
-
   const growth = {
     targetYoY: calculateMetricGrowth(
       periodValues.targetMonth.metrics,
@@ -480,9 +518,9 @@ export function buildSymbolPeriodMetrics(monthlyReports, executionMonth, options
       periodValues.currentYearYtdAverage.metrics,
       periodValues.priorYearYtdAverage.metrics,
     ),
-    previousMonthYoY: calculateMetricGrowth(
+    targetMoM: calculateMetricGrowth(
+      periodValues.targetMonth.metrics,
       periodValues.previousMonth.metrics,
-      previousMonthPriorYear.metrics,
     ),
   };
 
@@ -492,6 +530,5 @@ export function buildSymbolPeriodMetrics(monthlyReports, executionMonth, options
     periods: periodValues,
     growth,
     definitions,
-    comparisonPeriods: { previousMonthPriorYear },
   };
 }

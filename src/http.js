@@ -22,6 +22,14 @@ function isCodalHost(hostname) {
   return hostname === "codal.ir" || hostname.endsWith(".codal.ir");
 }
 
+function retryAfterMilliseconds(value) {
+  if (value == null || value === "") return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000);
+  const date = Date.parse(String(value));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+}
+
 function requestOnce(url, { headers, timeoutMs, rejectUnauthorized, redirectsLeft }) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -82,6 +90,7 @@ export async function requestBuffer(
     redirects = 5,
     retries = 2,
     retryDelayMs = 1_000,
+    onRetry = null,
   } = {},
 ) {
   const parsed = new URL(url);
@@ -95,6 +104,7 @@ export async function requestBuffer(
   let rejectUnauthorized = true;
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
+    let nextDelayMs = retryDelayMs * (2 ** attempt);
     try {
       const response = await requestOnce(parsed, {
         headers: requestHeaders,
@@ -112,6 +122,14 @@ export async function requestBuffer(
       });
       if (!RETRYABLE_CODES.has(response.status) || attempt === retries) throw error;
       lastError = error;
+      nextDelayMs = Math.max(
+        nextDelayMs,
+        retryAfterMilliseconds(response.headers["retry-after"]),
+        response.status === 429 ? 60_000 : 0,
+      );
+      if (typeof onRetry === "function") {
+        onRetry({ status: response.status, delayMs: nextDelayMs, url: response.url });
+      }
     } catch (error) {
       if (
         rejectUnauthorized &&
@@ -126,8 +144,11 @@ export async function requestBuffer(
       if (error instanceof HttpError && !RETRYABLE_CODES.has(error.status)) throw error;
       lastError = error;
       if (attempt === retries) throw error;
+      if (typeof onRetry === "function") {
+        onRetry({ status: error?.status ?? null, delayMs: nextDelayMs, url: parsed.toString() });
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+    await new Promise((resolve) => setTimeout(resolve, nextDelayMs));
   }
   throw lastError;
 }

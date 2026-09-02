@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07111f">
+    <meta
+      name="description"
+      content="داشبورد بررسی گزارش‌های فعالیت ماهانه شرکت‌های تولیدی بازار سرمایه"
+    >
+    <meta property="og:title" content="دیده‌بان گزارش‌های ماهانه کدال">
+    <meta
+      property="og:description"
+      content="داشبورد تولید، فروش و نرخ‌های شرکت‌های تولیدی بر پایه گزارش‌های عمومی کدال"
+    >
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/og.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="/og.png">
+    <title>دیده‌بان گزارش‌های ماهانه کدال</title>
+    <link rel="stylesheet" href="/styles.css?v=5">
+    <script src="/app.js?v=7" type="module"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
+
+    <div id="appShell" class="app-shell" aria-busy="true">
+      <aside id="industrySidebar" class="sidebar" aria-label="فهرست صنایع">
+        <div class="brand">
+          <div>
+            <strong>دیده‌بان کدال</strong>
+            <span>گزارش فعالیت ماهانه</span>
+          </div>
+        </div>
+
+        <div class="sidebar-heading">
+          <div>
+            <p class="eyebrow">دسته‌بندی بازار</p>
+            <h2>صنایع</h2>
+          </div>
+          <span id="industryCount" class="count-badge">۰</span>
+        </div>
+
+        <div id="industryList" class="industry-list" role="list"></div>
+
+        <div class="sidebar-footer">
+          <div class="selection-summary">
+            <span>نمادهای انتخاب‌شده</span>
+            <strong id="sidebarSelectedCount">۰</strong>
+          </div>
+          <button id="clearSelectionButton" class="text-button" type="button" disabled>
+            پاک‌کردن انتخاب‌ها
+          </button>
+        </div>
+      </aside>
+
+      <button
+        id="sidebarBackdrop"
+        class="sidebar-backdrop"
+        type="button"
+        aria-label="بستن فهرست صنایع"
+        tabindex="-1"
+      ></button>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="topbar-title">
+            <button
+              id="menuButton"
+              class="icon-button menu-button"
+              type="button"
+              aria-label="نمایش صنایع"
+              aria-controls="industrySidebar"
+              aria-expanded="false"
+            >
+              <span aria-hidden="true">☰</span>
+            </button>
+            <div>
+              <p class="eyebrow">تحلیل تولید و فروش</p>
+              <h1>گزارش‌های ماهانه شرکت‌ها</h1>
+            </div>
+          </div>
+
+          <div class="topbar-actions" aria-label="عملیات گزارش">
+            <button id="exportButton" class="button button-secondary" type="button" disabled>
+              <span class="button-icon" aria-hidden="true">↓</span>
+              خروجی اکسل
+            </button>
+            <button id="updateSelectedButton" class="button button-secondary" type="button" disabled>
+              <span class="button-icon" aria-hidden="true">↻</span>
+              آپدیت انتخاب‌شده‌ها
+            </button>
+            <button id="updateAllButton" class="button button-primary" type="button">
+              <span class="button-icon" aria-hidden="true">↻</span>
+              آپدیت همه
+            </button>
+          </div>
+        </header>
+
+        <main id="mainContent" class="main-content" tabindex="-1">
+          <section class="overview" aria-labelledby="dashboardTitle">
+            <div>
+              <div class="overview-title-row">
+                <span class="live-dot" aria-hidden="true"></span>
+                <span id="dashboardStatus">در حال دریافت اطلاعات</span>
+              </div>
+              <p id="dashboardSubtitle">
+                داده‌های تولید، فروش و نرخ‌ها بر اساس آخرین گزارش‌های دریافت‌شده از کدال
+              </p>
+            </div>
+            <dl class="overview-meta">
+              <div>
+                <dt>آخرین بروزرسانی</dt>
+                <dd id="lastUpdated">—</dd>
+              </div>
+              <div>
+                <dt>ماه مبنا</dt>
+                <dd id="targetMonth">—</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="content-toolbar" aria-label="فیلتر شرکت‌ها">
+            <div>
+              <p class="eyebrow">صنعت فعال</p>
+              <div class="industry-title-line">
+                <h2 id="activeIndustryTitle">—</h2>
+                <span id="activeIndustryCompanyCount" class="subtle-badge">۰ شرکت</span>
+              </div>
+            </div>
+            <label class="search-field" for="companySearch">
+              <span aria-hidden="true">⌕</span>
+              <span class="sr-only">جست‌وجوی نماد یا نام شرکت</span>
+              <input
+                id="companySearch"
+                type="search"
+                inputmode="search"
+                placeholder="جست‌وجوی نماد یا نام شرکت"
+                autocomplete="off"
+              >
+            </label>
+          </section>
+
+          <section id="dashboardContent" class="dashboard-content" aria-live="polite">
+            <div class="loading-state" role="status">
+              <span class="loader" aria-hidden="true"></span>
+              <strong>در حال آماده‌سازی داشبورد</strong>
+              <span>اطلاعات ذخیره‌شده در حال خواندن است…</span>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="updateDialog" class="confirm-dialog" aria-labelledby="dialogTitle">
+      <form method="dialog">
+        <button class="dialog-close" value="cancel" aria-label="بستن" type="submit">×</button>
+        <span class="dialog-symbol" aria-hidden="true">↻</span>
+        <h2 id="dialogTitle">تأیید بروزرسانی</h2>
+        <p id="dialogDescription">اطلاعات نمادها از کدال دریافت و در پایگاه داده جایگزین می‌شود.</p>
+        <div class="dialog-actions">
+          <button class="button button-ghost" value="cancel" type="submit">انصراف</button>
+          <button id="confirmUpdateButton" class="button button-primary" value="confirm" type="submit">
+            شروع بروزرسانی
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

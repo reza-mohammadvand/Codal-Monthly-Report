@@ -39,7 +39,7 @@ const PERIODS = Object.freeze([
   {
     key: 'priorYtd',
     aliases: ['priorYtd', 'priorYearYtd', 'priorYearYtdAverage'],
-    fallbackLabel: 'میانگین از ابتدای سال تا ماه مبنا ـ سال قبل',
+    fallbackLabel: 'میانگین از ابتدای سال مالی تا ماه مبنا ـ سال مالی قبل',
   },
   {
     key: 'priorAnnual',
@@ -49,7 +49,7 @@ const PERIODS = Object.freeze([
       'priorYearFullYearAverage',
       'priorYear12MonthAverage',
     ],
-    fallbackLabel: 'میانگین ۱۲ماهه سال قبل',
+    fallbackLabel: 'میانگین ۱۲ماهه سال مالی قبل',
   },
   {
     key: 'previous',
@@ -64,7 +64,7 @@ const PERIODS = Object.freeze([
   {
     key: 'currentYtd',
     aliases: ['currentYtd', 'currentYearYtd', 'currentYearYtdAverage'],
-    fallbackLabel: 'میانگین از ابتدای سال تا ماه مبنا ـ سال جاری',
+    fallbackLabel: 'میانگین از ابتدای سال مالی تا ماه مبنا ـ سال مالی جاری',
   },
 ]);
 
@@ -80,9 +80,9 @@ const GROWTH_COLUMNS = Object.freeze([
     fallbackLabel: 'رشد میانگین سال جاری نسبت به دوره مشابه',
   },
   {
-    key: 'previousYoY',
-    aliases: ['previousYoY', 'previousMonthYoY'],
-    fallbackLabel: 'رشد ماه قبل نسبت به ماه مشابه سال قبل',
+    key: 'targetMoM',
+    aliases: ['targetMoM', 'monthOverMonth'],
+    fallbackLabel: 'رشد ماه مبنا نسبت به ماه قبل',
   },
 ]);
 
@@ -93,7 +93,7 @@ const METRICS = Object.freeze([
     label: 'مقدار تولید کل',
     description: 'جمع مقدار تولید شرکت، فقط در صورت یکسان و قابل‌جمع بودن واحد محصولات.',
     defaultUnit: 'واحد گزارش',
-    numberFormat: '#,##0.##;[Red](#,##0.##);-',
+    numberFormat: '#,##0;[Red](#,##0);-',
   },
   {
     key: 'totalSales',
@@ -101,7 +101,7 @@ const METRICS = Object.freeze([
     label: 'مقدار فروش کل',
     description: 'جمع مقدار فروش شرکت، فقط در صورت یکسان و قابل‌جمع بودن واحد محصولات.',
     defaultUnit: 'واحد گزارش',
-    numberFormat: '#,##0.##;[Red](#,##0.##);-',
+    numberFormat: '#,##0;[Red](#,##0);-',
   },
   {
     key: 'totalRevenue',
@@ -122,7 +122,7 @@ const METRICS = Object.freeze([
     label: 'مقدار فروش محصول غالب',
     description: 'مقدار فروش محصولی که بیشترین مبلغ فروش را در همان دوره داشته است.',
     defaultUnit: 'واحد محصول',
-    numberFormat: '#,##0.##;[Red](#,##0.##);-',
+    numberFormat: '#,##0;[Red](#,##0);-',
     dominantProduct: true,
   },
   {
@@ -390,16 +390,24 @@ function compactColumnLabels(columnLabels) {
   return columnLabels.map((label, index) => {
     const text = textValue(label);
     if (index === 1 || index === 5) {
-      return text.replace(/^میانگین\s+فروردین\s+تا\s+/, 'میانگین تا\n');
+      const fiscalYearMatch = /^میانگین\s+از\s+ابتدای\s+سال\s+مالی\s+تا\s+(.+)$/u.exec(text);
+      if (fiscalYearMatch) return `میانگین سال مالی تا\n${fiscalYearMatch[1]}`;
+      return text
+        .replace(/^میانگین\s+از\s+ابتدای\s+سال\s+تا\s+/u, 'میانگین تا\n')
+        .replace(/^میانگین\s+فروردین\s+تا\s+/u, 'میانگین تا\n');
     }
     if (index === 2) {
-      return text.replace(/^میانگین\s+۱۲\s*ماهه\s+/, 'میانگین ۱۲ماهه\n');
+      return text.replace(/^میانگین\s+(?:۱۲|12)\s*ماهه\s+/u, 'میانگین ۱۲ماهه\n');
     }
-    if (index === 6 || index === 8) {
+    if (index === 6) {
       const match = /^رشد\s+(.+?)\s+نسبت\s+به\s+/.exec(text);
       return match ? `رشد ${match[1]}\nسالانه` : text;
     }
     if (index === 7) return 'رشد میانگین\nسالانه';
+    if (index === 8) {
+      const match = /^رشد\s+(.+?)\s+نسبت\s+به\s+(.+)$/u.exec(text);
+      return match ? `رشد ${match[1]}\nنسبت به ${match[2]}` : text;
+    }
     return text;
   });
 }
@@ -506,7 +514,6 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
     { key: 'product', width: 18 },
     ...Array.from({ length: 6 }, () => ({ width: 16 })),
     ...Array.from({ length: 3 }, () => ({ width: 14 })),
-    { key: 'previousPriorBaseline', width: 18, hidden: true },
   ];
 
   setTitleBand(sheet, 'A1:N1', `گزارش فعالیت ماهانه شرکت‌های تولیدی ـ ${industryName}`);
@@ -526,7 +533,7 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
     ['A3:E3', 'مشخصات', COLORS.gray700],
     ['F3:H3', 'سال قبل', COLORS.navy2],
     ['I3:K3', 'سال جاری', COLORS.navy2],
-    ['L3:N3', 'رشد سالانه', COLORS.teal],
+    ['L3:N3', 'رشد', COLORS.teal],
   ];
   for (const [range, title, fill] of groupRanges) {
     sheet.mergeCells(range);
@@ -548,7 +555,6 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
   ];
   const header = sheet.getRow(HEADER_ROW);
   header.values = headers;
-  header.getCell(15).value = 'مبنای رشد ماه قبل (مخفی)';
   header.height = 44;
   header.eachCell({ includeEmpty: true }, (cell, column) => {
     const isGrowth = column >= 12;
@@ -569,14 +575,6 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
       left: { style: 'thin', color: { argb: COLORS.gray300 } },
     };
   });
-}
-
-function comparisonPeriod(company) {
-  return company?.comparisonPeriods?.previousMonthPriorYear
-    ?? company?.previousPrior
-    ?? company?.periods?.previousMonthPriorYear
-    ?? company?.previousMonthPriorYear
-    ?? null;
 }
 
 function companyCoverageLabel(company) {
@@ -645,30 +643,22 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
       ytdGrowthResult,
     );
 
-    const previousGrowthState = growthMetricState(
+    const targetMomGrowthState = growthMetricState(
       company?.growth,
       GROWTH_COLUMNS[2],
       metric,
     );
-    const previousComparable = comparisonPeriod(company);
-    const previousBaseline = previousComparable
-      ? extractMetric(previousComparable, metric).value
-      : null;
-    const calculatedPriorMonthGrowth = calculateGrowth(entries[3].value, previousBaseline);
-    const priorMonthGrowth = previousGrowthState.present
-      ? previousGrowthState.value
-      : calculatedPriorMonthGrowth;
-    row.getCell(15).value = previousBaseline;
-    row.getCell(15).numFmt = metric.numberFormat;
-    const priorMonthGrowthResult = priorMonthGrowth === null
-      || calculatedPriorMonthGrowth === null
-      ? null
-      : priorMonthGrowth;
+    const calculatedTargetMomGrowth = calculateGrowth(entries[4].value, entries[3].value);
+    const targetMomGrowthResult = targetMomGrowthState.present
+      ? targetMomGrowthState.value === null || calculatedTargetMomGrowth === null
+        ? null
+        : targetMomGrowthState.value
+      : calculatedTargetMomGrowth;
     formulaGrowthCell(
       row.getCell(14),
+      `J${rowNumber}`,
       `I${rowNumber}`,
-      `O${rowNumber}`,
-      priorMonthGrowthResult,
+      targetMomGrowthResult,
     );
 
     for (let column = 1; column <= LAST_COLUMN; column += 1) {
@@ -877,6 +867,7 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
   setTitleBand(sheet, 'A16:N16', 'قواعد محاسبه و خواندن فایل', COLORS.teal);
   const notes = [
     'ماه مبنا همیشه یک ماه عقب‌تر از ماه اجرای برنامه است؛ بنابراین هنگام اجرا در شهریور، گزارش مرداد بررسی می‌شود.',
+    'بازه‌های میانگین برای هر نماد از ابتدای سال مالی همان شرکت ساخته می‌شوند؛ بنابراین نقطه شروع شرکت‌ها می‌تواند متفاوت باشد.',
     'رشد برابر است با «مقدار دوره جدید ÷ مقدار دوره مقایسه − ۱». اگر مقدار مبنا صفر یا یکی از دو مقدار ناموجود باشد، سلول رشد خالی می‌ماند.',
     'محصول غالب در هر دوره محصولی است که بیشترین مبلغ فروش همان دوره را دارد؛ برای میانگین‌های چندماهه، انتخاب بر مبنای مبلغ کل همان بازه انجام می‌شود.',
     'نرخ فروش موزون کل از تقسیم جمع مبلغ فروشِ تبدیل‌شده به ریال بر جمع مقدار فروش محاسبه می‌شود و میانگین ساده نرخ محصولات نیست.',

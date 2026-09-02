@@ -1,6 +1,9 @@
 node_modules/
 outputs/
 .cache/
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
 *.log
 .env
 ~$*.xlsx
