@@ -121,6 +121,7 @@ test("selected update refreshes exactly the requested pilot symbols and persists
   assert.equal(calls[0].refresh, false);
   assert.equal(calls[0].refreshSearch, true);
   assert.equal(calls[0].refreshReports, false);
+  assert.equal(calls[0].forceReparseReports, false);
   assert.equal(calls[0].companyDelayMs, 10_000);
   assert.equal(calls[0].existingCompanies.length, 1);
   assert.equal(calls[0].asOf, "1405/06/09");
@@ -149,6 +150,33 @@ test("all update requests every active manufacturing company", async () => {
   assert.equal(receivedOptions.symbols, undefined);
   assert.equal(receivedOptions.requestRetries, 4);
   assert.equal(receivedOptions.concurrency, 1);
+  assert.equal(receivedOptions.refreshReports, true);
+  assert.equal(receivedOptions.forceReparseReports, false);
+});
+
+test("all update is catalog-driven and persists a manufacturing symbol absent from the database", async () => {
+  const database = fakeDatabase(collection(["فولاد"]));
+  let receivedOptions = null;
+  const service = new DashboardService({
+    database,
+    collect: async (options) => {
+      receivedOptions = options;
+      return collection(["فولاد", "نماد تازه"]);
+    },
+    logger: null,
+  });
+
+  const dashboard = await service.update({ scope: "all" });
+  assert.equal(receivedOptions.allSymbols, true);
+  assert.equal(receivedOptions.symbols, undefined);
+  assert.equal(receivedOptions.refreshReports, true);
+  assert.equal(receivedOptions.forceReparseReports, false);
+  assert.deepEqual(receivedOptions.forceReparseSymbols, ["فولاد"]);
+  assert.deepEqual(receivedOptions.existingCompanies.map((item) => item.symbol), ["فولاد"]);
+  assert.deepEqual(
+    dashboard.industries[0].companies.map((item) => item.symbol),
+    ["فولاد", "نماد تازه"],
+  );
 });
 
 test("an empty database performs a full initial download", async () => {

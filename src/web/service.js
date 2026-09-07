@@ -61,6 +61,38 @@ function flattenCompanies(industryGroups) {
   ));
 }
 
+const DISPLAY_PERIOD_KEYS = Object.freeze([
+  "priorTarget",
+  "priorYtd",
+  "priorAnnual",
+  "previous",
+  "target",
+  "currentYtd",
+]);
+const DISPLAY_GROWTH_KEYS = Object.freeze(["targetYoY", "ytdYoY", "targetMoM"]);
+const DISPLAY_METRIC_KEYS = Object.freeze([
+  "dominantProduction",
+  "dominantSales",
+  "dominantRevenue",
+  "dominantRate",
+]);
+
+function isMissingNumber(value) {
+  return value === null || value === undefined || value === "" || !Number.isFinite(Number(value));
+}
+
+function hasIncompleteDisplayedData(company) {
+  return DISPLAY_PERIOD_KEYS.some((periodKey) => (
+    DISPLAY_METRIC_KEYS.some((metricKey) => (
+      isMissingNumber(company?.periods?.[periodKey]?.metrics?.[metricKey])
+    ))
+  )) || DISPLAY_GROWTH_KEYS.some((growthKey) => (
+    DISPLAY_METRIC_KEYS.some((metricKey) => (
+      isMissingNumber(company?.growth?.[growthKey]?.[metricKey])
+    ))
+  ));
+}
+
 function statusCounterKey(status) {
   if (status === "کامل") return "completeCount";
   if (status === "ناقص") return "partialCount";
@@ -90,6 +122,7 @@ export class DashboardService {
     concurrency = 1,
     requestDelayMs = 1_000,
     companyDelayMs = 10_000,
+    forceFullRefresh = false,
     requestRetries = 4,
     retryDelayMs = 1_000,
     logger = console,
@@ -107,6 +140,7 @@ export class DashboardService {
     this.concurrency = concurrency;
     this.requestDelayMs = requestDelayMs;
     this.companyDelayMs = companyDelayMs;
+    this.forceFullRefresh = forceFullRefresh;
     this.requestRetries = requestRetries;
     this.retryDelayMs = retryDelayMs;
     this.logger = logger;
@@ -186,6 +220,14 @@ export class DashboardService {
         "EMPTY_SELECTION",
       );
     }
+    const selectedSymbolSet = new Set(selectedSymbols.map(normalizeCodalText));
+    const forceReparseSymbols = storedCompanies
+      .filter((company) => (
+        hasIncompleteDisplayedData(company)
+        && (updateAll || selectedSymbolSet.has(normalizeCodalText(company.symbol)))
+      ))
+      .map((company) => company.symbol)
+      .filter(Boolean);
 
     const startedAt = new Date().toISOString();
     this.updateState = {
@@ -218,7 +260,9 @@ export class DashboardService {
           retryDelayMs: this.retryDelayMs,
           refresh: false,
           refreshSearch: true,
-          refreshReports: initialLoad,
+          refreshReports: initialLoad || this.forceFullRefresh || forceReparseSymbols.length > 0,
+          forceReparseReports: this.forceFullRefresh,
+          forceReparseSymbols,
           existingCompanies: storedCompanies,
           logger: null,
           onCompanyResult: (event) => {

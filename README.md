@@ -3,7 +3,7 @@
 Generate a multi-sheet Excel workbook from the public monthly activity reports
 published on [Codal](https://www.codal.ir/). The project covers manufacturing
 companies listed on the Tehran Stock Exchange and Iran Fara Bourse, groups them
-by industry, and creates a six-row analytical block for every symbol.
+by industry, and creates a four-row dominant-basket block for every symbol.
 
 ## Features
 
@@ -13,9 +13,9 @@ by industry, and creates a six-row analytical block for every symbol.
 - Runs a focused four-symbol pilot (`فولاد`, `فملی`, `شپنا`, and `کگل`) by default.
 - Includes a dark, right-to-left web dashboard backed by a persistent SQLite
   database, with industry and symbol selection controls.
-- Performs a full extraction when the database is empty. Later updates always
-  refresh the Codal filing index but download and parse only new monthly filings
-  or corrections; unchanged monthly data is reused from SQLite.
+- Performs a full extraction when the database is empty. Web updates currently
+  force a fresh download and reprocessing of every required monthly report so
+  all stored companies migrate to the new dominant-basket calculation.
 - Processes companies sequentially and pauses for 10 seconds after each company
   by default to respect Codal's rate limits.
 - Checkpoints each completed or changed company in SQLite immediately.
@@ -60,19 +60,18 @@ provide an explicit Jalali execution date with `--as-of`.
 
 ## Metrics
 
-Each company is represented by six rows:
+Each company is represented by four rows:
 
-1. Total production quantity
-2. Total sales quantity
-3. Total sales revenue in million rials
-4. Sales quantity of the dominant product
-5. Sales rate of the dominant product
-6. Company-wide weighted sales rate
+1. Production quantity of the dominant product basket
+2. Sales quantity of the dominant product basket
+3. Sales revenue of the dominant product basket in million rials
+4. Weighted sales rate of the dominant product basket
 
-The dominant product is the product with the highest total revenue over the
-selected period. The company-wide weighted rate is calculated as total sales
-revenue in rials divided by total sales quantity; it is not a simple average of
-the individual product rates.
+Products are sorted by sales revenue. The dominant basket is the smallest set
+from the top of that ranking whose cumulative share is strictly greater than
+50% of product revenue for the selected period. If only one product exists, it
+is the basket. The basket rate is its revenue in rials divided by its sales
+quantity; it is not a simple average of product rates.
 
 ## Requirements
 
@@ -103,14 +102,26 @@ Codal during normal page loads.
 
 The right sidebar groups companies by industry. Industry and company checkboxes
 control both **Update selected** and **Excel export**. **Update all** refreshes
-the complete active manufacturing-company catalog returned by Codal (currently
-408 issuers), while **Update selected** changes only the chosen database records.
+the complete active manufacturing-company catalog returned by Codal on that
+run, including issuers not yet in SQLite, while **Update selected** changes only
+the chosen database records.
 Progress is shown while the full run is active, and each finished company is
 saved immediately so a later failure cannot discard earlier results.
-The initial run downloads the complete required history. Subsequent runs compare
-Codal tracing numbers with the raw monthly records stored in SQLite and update
-only companies with a new filing or correction. A technical failure during an
-incremental check never replaces an already valid stored report.
+Updates are incremental: Codal's current manufacturing-company catalog is
+refreshed on **Update all**, newly listed issuers are added, and existing
+companies download and replace data only when a new filing or correction is
+available. **Update selected** applies the same new-filing check to the chosen
+symbols. Companies shown in the incomplete-data list are fully downloaded and
+reprocessed on either update scope even when their latest tracing number has
+not changed, so recoverable parsing gaps can be filled. A technical failure
+never replaces an already valid stored report.
+
+The normal daily path is identifier-only: one small Codal search checks report
+tracing numbers from the latest stored report onward. When every returned ID is
+already stored, the company is skipped before fiscal-calendar resolution,
+report-page downloads, calculations, or database writes. The 10-second
+between-company pause applies only after a company is actually downloaded or
+reprocessed, not after an unchanged identifier check.
 
 For an initial full database load from the terminal, use:
 
@@ -188,7 +199,7 @@ target Jalali year and month in its filename.
 
 - **Guide:** a compact report summary and industry index; detailed guidance is
   retained in hidden rows and can be expanded when needed.
-- **Industry sheets:** one worksheet per industry, with six rows per company,
+- **Industry sheets:** one worksheet per industry, with four rows per company,
   compact frozen headers, merged company labels, number formatting, and subtle
   growth font colors.
 - **Source audit:** every selected Codal report, correction status, publication
@@ -197,10 +208,9 @@ target Jalali year and month in its filename.
 
 ## Data Quality Rules
 
-- Product quantities are aggregated only when their units are compatible.
-  Otherwise, total production, total sales quantity, and the company-wide
-  weighted rate are reported as unavailable while revenue and dominant-product
-  metrics remain available.
+- Basket production and sales quantities are aggregated only when the selected
+  products have compatible units. Otherwise, those quantities and the basket
+  rate are unavailable while basket revenue remains available.
 - Incomplete multi-month averages are blank by default. Use `--allow-partial`
   only when calculating from the available months is acceptable.
 - If Codal's fiscal-year endpoint is empty, the program recovers the year-end
@@ -211,7 +221,7 @@ target Jalali year and month in its filename.
 - Growth is unavailable when either value is missing or the comparison value is
   zero.
 - Sales returns and discounts are included in company net revenue but cannot be
-  selected as the dominant product.
+  selected for the dominant basket.
 - The final Codal total row is treated as the authoritative company sales
   revenue.
 - Downloaded responses are stored in `.cache/codal`; generated workbooks are
@@ -229,8 +239,8 @@ npm test
 
 The tests cover Jalali month arithmetic, shifted and company-specific fiscal
 periods, Codal fiscal-year lookup, HTML table parsing, corrections, sales
-returns and discounts, incompatible units, dominant-product selection,
-weighted rates, missing data, month-over-month and year-over-year growth, Excel
+returns and discounts, incompatible units, dominant-basket selection and rate,
+missing data, month-over-month and year-over-year growth, Excel
 serialization, SQLite persistence, selective refresh/export behavior, and the
 web HTTP routes.
 

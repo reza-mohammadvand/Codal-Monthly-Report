@@ -14,12 +14,10 @@ const GROWTH_COLUMNS = Object.freeze([
 ]);
 
 const METRICS = Object.freeze([
-  { key: "totalProduction", label: "مقدار تولید کل", unit: "واحد گزارش" },
-  { key: "totalSales", label: "مقدار فروش کل", unit: "واحد گزارش" },
-  { key: "totalRevenue", label: "مبلغ فروش کل", unit: "میلیون ریال" },
-  { key: "dominantSales", label: "مقدار فروش محصول غالب", unit: "واحد محصول", dominant: true },
-  { key: "dominantRate", label: "نرخ فروش محصول غالب", unit: "ریال / واحد", dominant: true },
-  { key: "weightedRate", label: "نرخ فروش موزون کل", unit: "ریال / واحد" },
+  { key: "dominantProduction", label: "مقدار تولید سبد غالب", unit: "واحد محصول" },
+  { key: "dominantSales", label: "مقدار فروش سبد غالب", unit: "واحد محصول" },
+  { key: "dominantRevenue", label: "مبلغ فروش سبد غالب", unit: "میلیون ریال" },
+  { key: "dominantRate", label: "نرخ فروش سبد غالب", unit: "ریال / واحد" },
 ]);
 
 const JALALI_MONTHS = Object.freeze([
@@ -48,7 +46,6 @@ const elements = {
   sidebarBackdrop: document.querySelector("#sidebarBackdrop"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
   sidebarSelectedCount: document.querySelector("#sidebarSelectedCount"),
-  overviewSelectedCount: document.querySelector("#overviewSelectedCount"),
   dashboardStatus: document.querySelector("#dashboardStatus"),
   dashboardSubtitle: document.querySelector("#dashboardSubtitle"),
   lastUpdated: document.querySelector("#lastUpdated"),
@@ -57,6 +54,12 @@ const elements = {
   activeIndustryCompanyCount: document.querySelector("#activeIndustryCompanyCount"),
   companySearch: document.querySelector("#companySearch"),
   dashboardContent: document.querySelector("#dashboardContent"),
+  dashboardActionsForm: document.querySelector("#dashboardActionsForm"),
+  incompleteButton: document.querySelector("#incompleteButton"),
+  incompleteButtonCount: document.querySelector("#incompleteButtonCount"),
+  incompleteDialog: document.querySelector("#incompleteDialog"),
+  incompleteDialogDescription: document.querySelector("#incompleteDialogDescription"),
+  incompleteList: document.querySelector("#incompleteList"),
   exportButton: document.querySelector("#exportButton"),
   updateSelectedButton: document.querySelector("#updateSelectedButton"),
   updateAllButton: document.querySelector("#updateAllButton"),
@@ -67,6 +70,33 @@ const elements = {
   toast: document.querySelector("#toast"),
 };
 
+// Wire the primary actions immediately. Keeping these handlers near the DOM
+// lookup makes the buttons operational even if a later optional UI feature is
+// unavailable in a particular browser.
+elements.exportButton.onclick = (event) => {
+  event.preventDefault();
+  exportSelected();
+};
+elements.updateSelectedButton.onclick = (event) => {
+  event.preventDefault();
+  requestUpdate("selected");
+};
+elements.updateAllButton.onclick = (event) => {
+  event.preventDefault();
+  requestUpdate("all");
+};
+elements.incompleteButton.onclick = () => openIncompleteDialog();
+elements.confirmUpdateButton.onclick = () => {
+  const scope = state.pendingUpdateScope;
+  state.pendingUpdateScope = null;
+  if (elements.updateDialog.open) elements.updateDialog.close();
+  if (scope) performUpdate(scope);
+};
+elements.dashboardActionsForm.onsubmit = () => {
+  showToast("درخواست ثبت شد؛ لطفاً تا پایان عملیات این صفحه را باز نگه دارید…", "busy", {
+    persistent: true,
+  });
+};
 const faInteger = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const faYear = new Intl.NumberFormat("fa-IR", {
   useGrouping: false,
@@ -169,13 +199,16 @@ function setDrawer(open) {
   elements.sidebarBackdrop.tabIndex = open ? 0 : -1;
 }
 
-function showToast(message, tone = "success") {
+function showToast(message, tone = "success", { persistent = false } = {}) {
   window.clearTimeout(state.toastTimer);
+  state.toastTimer = null;
   elements.toast.textContent = message;
   elements.toast.className = `toast visible ${tone}`;
-  state.toastTimer = window.setTimeout(() => {
-    elements.toast.classList.remove("visible");
-  }, 4200);
+  if (!persistent) {
+    state.toastTimer = window.setTimeout(() => {
+      elements.toast.classList.remove("visible");
+    }, 4200);
+  }
 }
 
 async function responseError(response) {
@@ -242,6 +275,12 @@ async function loadDashboard() {
     if (!response.ok) throw new Error(await responseError(response));
     ingestDashboard(await response.json());
     if (state.dashboard?.metadata?.update?.running) monitorActiveUpdate();
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("action") === "updated") {
+      showToast("اطلاعات با موفقیت بروزرسانی و در پایگاه داده ذخیره شد.", "success");
+      url.searchParams.delete("action");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
   } catch (error) {
     renderError(error.message || "خطای ناشناخته");
   }
@@ -260,8 +299,10 @@ function renderMetadata() {
   const industries = getIndustries();
   const companies = industries.flatMap((industry) => industry.companies ?? []);
   const complete = companies.filter((company) => statusTone(company.status) === "complete").length;
+  const incomplete = companies.filter((company) => missingDisplayedValueCount(company) > 0).length;
 
   elements.industryCount.textContent = faInteger.format(industries.length);
+  elements.incompleteButtonCount.textContent = faInteger.format(incomplete);
   elements.lastUpdated.textContent = formatDateTime(latestUpdateValue());
   elements.targetMonth.textContent = formatJalaliMonth(metadata.targetMonth);
   elements.dashboardStatus.textContent = companies.length
@@ -270,6 +311,53 @@ function renderMetadata() {
   elements.dashboardSubtitle.textContent = companies.length
     ? `اطلاعات ${faInteger.format(companies.length)} شرکت تولیدی در ${faInteger.format(industries.length)} صنعت، مستقیماً از پایگاه داده خوانده شده است.`
     : "پس از نخستین بروزرسانی، اطلاعات شرکت‌ها در این بخش نمایش داده می‌شود.";
+}
+
+function missingDisplayedValueCount(company) {
+  let missing = 0;
+  for (const column of PERIOD_COLUMNS) {
+    for (const metric of METRICS) {
+      if (finiteNumber(company.periods?.[column.key]?.metrics?.[metric.key]) === null) missing += 1;
+    }
+  }
+  for (const column of GROWTH_COLUMNS) {
+    for (const metric of METRICS) {
+      if (finiteNumber(company.growth?.[column.key]?.[metric.key]) === null) missing += 1;
+    }
+  }
+  return missing;
+}
+
+function incompleteCompanies() {
+  return getIndustries()
+    .flatMap((industry) => (industry.companies ?? []).map((company) => ({
+      company,
+      industryName: industry.industryName || "صنعت نامشخص",
+      missingCount: missingDisplayedValueCount(company),
+    })))
+    .filter((item) => item.missingCount > 0)
+    .sort((left, right) => companySymbol(left.company).localeCompare(companySymbol(right.company), "fa"));
+}
+
+function openIncompleteDialog() {
+  const companies = incompleteCompanies();
+  elements.incompleteDialogDescription.textContent = companies.length
+    ? `${faInteger.format(companies.length)} نماد دست‌کم یک مقدار خالی در جدول تحلیلی دارند.`
+    : "هیچ نمادی با مقدار خالی در جدول تحلیلی پیدا نشد.";
+  elements.incompleteList.innerHTML = companies.length
+    ? companies.map(({ company, industryName, missingCount }) => `
+        <div class="incomplete-item">
+          <strong class="incomplete-symbol">${escapeHtml(companySymbol(company) || "—")}</strong>
+          <span class="incomplete-name" title="${escapeHtml(company.name || industryName)}">${escapeHtml(company.name || industryName)}</span>
+          <span class="incomplete-missing-count">${faInteger.format(missingCount)} مقدار خالی</span>
+        </div>
+      `).join("")
+    : '<div class="incomplete-empty">اطلاعات همه نمادهای موجود کامل است.</div>';
+  if (typeof elements.incompleteDialog.showModal === "function") {
+    elements.incompleteDialog.showModal();
+  } else {
+    elements.incompleteDialog.setAttribute("open", "");
+  }
 }
 
 function renderIndustryList() {
@@ -323,7 +411,8 @@ function renderIndustryList() {
 
 function renderActiveIndustry() {
   const industry = activeIndustry();
-  if (!industry) {
+  const query = normalizeText(state.searchQuery);
+  if (!industry && !query) {
     elements.activeIndustryTitle.textContent = "بدون صنعت";
     elements.activeIndustryCompanyCount.textContent = "۰ شرکت";
     elements.dashboardContent.innerHTML = `
@@ -335,20 +424,28 @@ function renderActiveIndustry() {
     return;
   }
 
-  const companies = Array.isArray(industry.companies) ? industry.companies : [];
-  const query = normalizeText(state.searchQuery);
+  const industryCompanies = Array.isArray(industry?.companies) ? industry.companies : [];
+  const searchableCompanies = query
+    ? getIndustries().flatMap((item) => item.companies ?? [])
+    : industryCompanies;
   const visibleCompanies = query
-    ? companies.filter((company) => normalizeText(`${company.symbol} ${company.name}`).includes(query))
-    : companies;
+    ? searchableCompanies.filter((company) => (
+        normalizeText(`${company.symbol} ${company.name}`).includes(query)
+      ))
+    : industryCompanies;
 
-  elements.activeIndustryTitle.textContent = industry.industryName || "صنعت بدون نام";
-  elements.activeIndustryCompanyCount.textContent = `${faInteger.format(companies.length)} شرکت`;
+  elements.activeIndustryTitle.textContent = query
+    ? "نتایج جست‌وجو در همه صنایع"
+    : industry?.industryName || "صنعت بدون نام";
+  elements.activeIndustryCompanyCount.textContent = query
+    ? `${faInteger.format(visibleCompanies.length)} نتیجه`
+    : `${faInteger.format(industryCompanies.length)} شرکت`;
 
   if (!visibleCompanies.length) {
     elements.dashboardContent.innerHTML = `
       <div class="empty-state">
-        <strong>${companies.length ? "شرکتی با این عبارت پیدا نشد" : "این صنعت هنوز شرکتی ندارد"}</strong>
-        <p>${companies.length ? "نام شرکت یا نماد را با عبارت دیگری جست‌وجو کنید." : "پس از بروزرسانی داده‌ها، شرکت‌های این صنعت نمایش داده می‌شوند."}</p>
+        <strong>${query ? "شرکتی با این عبارت پیدا نشد" : "این صنعت هنوز شرکتی ندارد"}</strong>
+        <p>${query ? "نام شرکت یا نماد را با عبارت دیگری جست‌وجو کنید." : "پس از بروزرسانی داده‌ها، شرکت‌های این صنعت نمایش داده می‌شوند."}</p>
       </div>
     `;
     return;
@@ -412,6 +509,16 @@ function metricCell(value, { isGrowth = false, note = "", growthStart = false } 
   `;
 }
 
+function companyMetricUnit(company, metric) {
+  const target = company.periods?.target;
+  if (metric.key === "dominantRevenue") return metric.unit;
+  if (metric.key === "dominantRate") {
+    const unit = target?.dominantProductRateUnit;
+    return unit ? `ریال / ${unit}` : metric.unit;
+  }
+  return target?.dominantProductUnit || metric.unit;
+}
+
 function renderCompanyCard(company) {
   const symbol = companySymbol(company);
   const name = company.name || "نام شرکت ثبت نشده";
@@ -444,7 +551,7 @@ function renderCompanyCard(company) {
       <tr>
         <th class="metric-column" scope="row">
           <span class="metric-label">${escapeHtml(metric.label)}</span>
-          <span class="metric-unit">${escapeHtml(metric.unit)}</span>
+          <span class="metric-unit">${escapeHtml(companyMetricUnit(company, metric))}</span>
         </th>
         ${periodCells.join("")}
         ${growthCells.join("")}
@@ -473,7 +580,7 @@ function renderCompanyCard(company) {
         <div class="company-badges">
           <span class="badge status-${tone}">${escapeHtml(status)}</span>
           <span class="badge">${escapeHtml(fiscalEndLabel(company.fiscalYearEndMonth))}</span>
-          ${targetDominantProduct ? `<span class="badge badge-dominant"><span>محصول غالب:</span> ${escapeHtml(targetDominantProduct)}</span>` : ""}
+          ${targetDominantProduct ? `<span class="badge badge-dominant"><span>سبد غالب:</span> ${escapeHtml(targetDominantProduct)}</span>` : ""}
           <span class="badge">بروزرسانی: ${escapeHtml(formatDateTime(company.updatedAt ?? state.dashboard?.metadata?.generatedAt))}</span>
         </div>
         <div class="coverage" aria-label="پوشش گزارش ${faPercent.format(coverage)}">
@@ -530,12 +637,17 @@ function toggleCompanyDetails(symbol) {
 function renderSelectionState() {
   const count = state.selectedSymbols.size;
   const busy = Boolean(state.busyAction);
+  const selectedActionsDisabled = count === 0 || busy;
   elements.sidebarSelectedCount.textContent = faInteger.format(count);
-  elements.overviewSelectedCount.textContent = faInteger.format(count);
-  elements.clearSelectionButton.disabled = count === 0 || busy;
-  elements.exportButton.disabled = count === 0 || busy;
-  elements.updateSelectedButton.disabled = count === 0 || busy;
+  elements.clearSelectionButton.disabled = selectedActionsDisabled;
+  // Keep the actions clickable when nothing is selected so their handlers can
+  // explain what is missing. During a running action they are truly disabled.
+  elements.exportButton.disabled = busy;
+  elements.updateSelectedButton.disabled = busy;
+  elements.exportButton.setAttribute("aria-disabled", String(count === 0 || busy));
+  elements.updateSelectedButton.setAttribute("aria-disabled", String(count === 0 || busy));
   elements.updateAllButton.disabled = busy;
+  syncNativeActionForm();
 
   elements.exportButton.setAttribute(
     "aria-label",
@@ -545,6 +657,17 @@ function renderSelectionState() {
     "aria-label",
     count ? `بروزرسانی ${faInteger.format(count)} نماد انتخاب‌شده` : "برای بروزرسانی ابتدا نماد انتخاب کنید",
   );
+}
+
+function syncNativeActionForm() {
+  elements.dashboardActionsForm.replaceChildren();
+  for (const symbol of state.selectedSymbols) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "symbols";
+    input.value = symbol;
+    elements.dashboardActionsForm.append(input);
+  }
 }
 
 function toggleIndustry(key, checked) {
@@ -565,11 +688,37 @@ function toggleCompany(symbol, checked) {
   if (checked) state.selectedSymbols.add(symbol);
   else state.selectedSymbols.delete(symbol);
   renderIndustryList();
-  renderActiveIndustry();
+  const card = [...elements.dashboardContent.querySelectorAll("[data-company-symbol]")]
+    .find((element) => element.dataset.companySymbol === symbol);
+  if (card) {
+    card.classList.toggle("selected", checked);
+    const checkbox = card.querySelector("[data-company-checkbox]");
+    if (checkbox) checkbox.checked = checked;
+  }
   renderSelectionState();
 }
 
+function syncSelectionFromPage() {
+  for (const checkbox of elements.dashboardContent.querySelectorAll("[data-company-checkbox]")) {
+    const symbol = checkbox.dataset.companyCheckbox;
+    if (!symbol) continue;
+    if (checkbox.checked) state.selectedSymbols.add(symbol);
+    else state.selectedSymbols.delete(symbol);
+  }
+  for (const checkbox of elements.industryList.querySelectorAll("[data-industry-checkbox]:checked")) {
+    const key = checkbox.dataset.industryCheckbox;
+    const industry = getIndustries().find((item, index) => industryKey(item, index) === key);
+    for (const company of industry?.companies ?? []) {
+      const symbol = companySymbol(company);
+      if (symbol) state.selectedSymbols.add(symbol);
+    }
+  }
+  renderSelectionState();
+  return [...state.selectedSymbols];
+}
+
 function openUpdateDialog(scope) {
+  if (scope === "selected") syncSelectionFromPage();
   if (scope === "selected" && !state.selectedSymbols.size) {
     showToast("ابتدا دست‌کم یک نماد را انتخاب کنید.", "error");
     return;
@@ -578,17 +727,29 @@ function openUpdateDialog(scope) {
   const catalogCount = finiteNumber(state.dashboard?.metadata?.companyCatalogCount);
   const count = scope === "all" ? catalogCount : state.selectedSymbols.size;
   const initialLoad = !state.dashboard?.metadata?.hasData;
+  const forceFullRefresh = state.dashboard?.metadata?.forceFullRefresh !== false;
   elements.dialogTitle.textContent = scope === "all" ? "آپدیت همه نمادها" : "آپدیت نمادهای انتخاب‌شده";
   elements.dialogDescription.textContent = scope === "all"
-    ? initialLoad
-      ? `${count ? `گزارش‌های ${faInteger.format(count)} شرکت تولیدی` : "گزارش‌های تمام شرکت‌های تولیدی فعال"} برای بار نخست به‌طور کامل از کدال دریافت می‌شوند. میان پایان هر نماد و شروع نماد بعدی ۱۰ ثانیه فاصله خواهد بود.`
+    ? initialLoad || forceFullRefresh
+      ? `${count ? `گزارش‌های ${faInteger.format(count)} شرکت تولیدی` : "گزارش‌های تمام شرکت‌های تولیدی فعال"} ${initialLoad ? "برای بار نخست" : "به‌دلیل تغییر منطق سبد غالب، در این مرحله"} به‌طور کامل از کدال دریافت می‌شوند. میان پایان هر نماد و شروع نماد بعدی ۱۰ ثانیه فاصله خواهد بود.`
       : `فهرست اطلاعیه‌های ${count ? faInteger.format(count) : "تمام"} شرکت بررسی می‌شود و فقط گزارش‌های تازه یا اصلاحیه‌ها استخراج و ذخیره می‌شوند. نمادهای بدون تغییر دوباره دانلود نمی‌شوند.`
-    : `اطلاعیه‌های ${faInteger.format(count)} نماد انتخاب‌شده بررسی می‌شوند و فقط گزارش تازه یا اصلاحیه در پایگاه داده جایگزین خواهد شد.`;
+    : forceFullRefresh
+      ? `تمام گزارش‌های موردنیاز ${faInteger.format(count)} نماد انتخاب‌شده دوباره از کدال دریافت، پردازش و در پایگاه داده ذخیره می‌شوند.`
+      : `اطلاعیه‌های ${faInteger.format(count)} نماد انتخاب‌شده بررسی می‌شوند و فقط گزارش تازه یا اصلاحیه در پایگاه داده جایگزین خواهد شد.`;
   if (typeof elements.updateDialog.showModal === "function") {
     elements.updateDialog.returnValue = "";
     elements.updateDialog.showModal();
   }
   else performUpdate(scope);
+}
+
+function requestUpdate(scope) {
+  if (scope === "selected") syncSelectionFromPage();
+  if (scope === "selected" && !state.selectedSymbols.size) {
+    showToast("ابتدا دست‌کم یک نماد را انتخاب کنید.", "error");
+    return;
+  }
+  performUpdate(scope);
 }
 
 function updateProgressMessage(update) {
@@ -618,7 +779,9 @@ function monitorActiveUpdate() {
       if (!response.ok) return;
       const update = await response.json();
       if (update.running) {
-        elements.dashboardStatus.textContent = updateProgressMessage(update);
+        const message = updateProgressMessage(update);
+        elements.dashboardStatus.textContent = message;
+        showToast(message, "busy", { persistent: true });
         return;
       }
       stopUpdateMonitor();
@@ -639,7 +802,13 @@ async function performUpdate(scope) {
   state.busyAction = "update";
   renderSelectionState();
   elements.dashboardContent.setAttribute("aria-busy", "true");
-  showToast(scope === "all" ? "بروزرسانی همه نمادها آغاز شد…" : "بروزرسانی نمادهای منتخب آغاز شد…");
+  showToast(
+    scope === "all"
+      ? "در حال بررسی همه شرکت‌های تولیدی، نمادهای جدید و اطلاعات ناقص در کدال…"
+      : `در حال بررسی اطلاعیه‌های جدید و اطلاعات ناقص ${faInteger.format(symbols?.length ?? 0)} نماد انتخاب‌شده…`,
+    "busy",
+    { persistent: true },
+  );
   monitorActiveUpdate();
   try {
     const response = await fetch("/api/update", {
@@ -670,12 +839,18 @@ function filenameFromResponse(response) {
 }
 
 async function exportSelected() {
+  syncSelectionFromPage();
   if (!state.selectedSymbols.size) {
     showToast("ابتدا نمادهای موردنظر را انتخاب کنید.", "error");
     return;
   }
   state.busyAction = "export";
   renderSelectionState();
+  showToast(
+    `در حال آماده‌سازی خروجی اکسل برای ${faInteger.format(state.selectedSymbols.size)} نماد…`,
+    "busy",
+    { persistent: true },
+  );
   try {
     const response = await fetch("/api/export", {
       method: "POST",
@@ -705,6 +880,11 @@ async function exportSelected() {
 }
 
 elements.industryList.addEventListener("click", (event) => {
+  const checkbox = event.target.closest("[data-industry-checkbox]");
+  if (checkbox) {
+    toggleIndustry(checkbox.dataset.industryCheckbox, checkbox.checked);
+    return;
+  }
   const button = event.target.closest("[data-industry-button]");
   if (!button) return;
   state.activeIndustryId = button.dataset.industryButton;
@@ -715,12 +895,12 @@ elements.industryList.addEventListener("click", (event) => {
   if (window.matchMedia("(max-width: 920px)").matches) setDrawer(false);
 });
 
-elements.industryList.addEventListener("change", (event) => {
+elements.industryList.addEventListener("input", (event) => {
   const checkbox = event.target.closest("[data-industry-checkbox]");
   if (checkbox) toggleIndustry(checkbox.dataset.industryCheckbox, checkbox.checked);
 });
 
-elements.dashboardContent.addEventListener("change", (event) => {
+elements.dashboardContent.addEventListener("input", (event) => {
   const checkbox = event.target.closest("[data-company-checkbox]");
   if (checkbox) toggleCompany(checkbox.dataset.companyCheckbox, checkbox.checked);
 });
@@ -730,7 +910,11 @@ elements.dashboardContent.addEventListener("click", (event) => {
     loadDashboard();
     return;
   }
-  if (event.target.closest(".company-check")) return;
+  const checkbox = event.target.closest("[data-company-checkbox]");
+  if (checkbox) {
+    toggleCompany(checkbox.dataset.companyCheckbox, checkbox.checked);
+    return;
+  }
   const toggle = event.target.closest("[data-company-toggle]");
   if (toggle) toggleCompanyDetails(toggle.dataset.companyToggle);
 });
@@ -766,9 +950,6 @@ window.matchMedia("(min-width: 921px)").addEventListener("change", (event) => {
   if (event.matches) setDrawer(false);
 });
 
-elements.exportButton.addEventListener("click", exportSelected);
-elements.updateSelectedButton.addEventListener("click", () => openUpdateDialog("selected"));
-elements.updateAllButton.addEventListener("click", () => openUpdateDialog("all"));
 elements.updateDialog.addEventListener("close", () => {
   if (elements.updateDialog.returnValue === "confirm" && state.pendingUpdateScope) {
     performUpdate(state.pendingUpdateScope);

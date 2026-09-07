@@ -13,8 +13,8 @@
  *     unit: String | null,
  *     unitsCompatible: Boolean
  *   },
- *   products: [ // recommended; needed for exact period-level dominant product
- *     { name, unit, sales, revenue, rate }
+ *   products: [ // recommended; needed for exact period-level dominant basket
+ *     { name, unit, production, sales, revenue, rate }
  *   ],
  *   dominantProduct: { name, unit, sales, revenue, rate } // fallback only
  * }
@@ -36,12 +36,10 @@ export const JALALI_MONTH_NAMES = Object.freeze([
 ]);
 
 export const METRIC_KEYS = Object.freeze([
-  'production',
-  'sales',
-  'revenue',
+  'dominantProductProduction',
   'dominantProductSales',
+  'dominantProductRevenue',
   'dominantProductRate',
-  'weightedRate',
 ]);
 
 const DEFAULT_REVENUE_SCALE = 1_000_000;
@@ -292,6 +290,26 @@ function normalizedUnit(value) {
   return unit || null;
 }
 
+function quantityUnitScale(value) {
+  const unit = String(value ?? '')
+    .replace(/[\u200c\u200e\u200f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/^(?:هزار|thousand)(?:\s|$)/i.test(unit)) return 1_000;
+  if (/^(?:میلیون|million)(?:\s|$)/i.test(unit)) return 1_000_000;
+  if (/^(?:میلیارد|billion)(?:\s|$)/i.test(unit)) return 1_000_000_000;
+  return 1;
+}
+
+function baseQuantityUnit(value) {
+  const unit = normalizedUnit(value);
+  if (!unit) return null;
+  const base = unit
+    .replace(/^(?:هزار|میلیون|میلیارد|thousand|million|billion)\s*/i, '')
+    .trim();
+  return base || unit;
+}
+
 function reportRevenueScale(report, fallback) {
   const scale = finiteNumber(report?.revenueScale);
   return scale !== null && scale > 0 ? scale : fallback;
@@ -317,6 +335,8 @@ function aggregateDominantProduct(reports, average, revenueScale) {
       const current = products.get(key) ?? {
         name,
         unit,
+        production: 0,
+        hasProduction: false,
         sales: 0,
         hasSales: false,
         revenue: 0,
@@ -324,8 +344,13 @@ function aggregateDominantProduct(reports, average, revenueScale) {
         revenueInBaseUnit: 0,
         firstSeen: products.size,
       };
+      const production = finiteNumber(product.production);
       const sales = finiteNumber(product.sales);
       const revenue = finiteNumber(product.revenue);
+      if (production !== null) {
+        current.production += production;
+        current.hasProduction = true;
+      }
       if (sales !== null) {
         current.sales += sales;
         current.hasSales = true;
@@ -346,24 +371,64 @@ function aggregateDominantProduct(reports, average, revenueScale) {
     const revenueDifference = right.revenueInBaseUnit - left.revenueInBaseUnit;
     return revenueDifference || left.firstSeen - right.firstSeen;
   });
-  const dominant = candidates[0] ?? null;
-  if (!dominant) return null;
+  if (!candidates.length) return null;
 
-  const sales = dominant.hasSales
-    ? dominant.sales / (average ? reports.length || 1 : 1)
+  const totalRevenueInBaseUnit = candidates.reduce(
+    (sum, product) => sum + product.revenueInBaseUnit,
+    0,
+  );
+  const selected = [];
+  let selectedRevenueInBaseUnit = 0;
+  for (const product of candidates) {
+    selected.push(product);
+    selectedRevenueInBaseUnit += product.revenueInBaseUnit;
+    // The business rule is strictly greater than 50%; exactly 50% requires
+    // adding the next product.
+    if (selectedRevenueInBaseUnit > totalRevenueInBaseUnit / 2) break;
+  }
+
+  const units = new Set(selected.map((product) => product.unit).filter(Boolean));
+  const unitsCompatible = units.size <= 1;
+  const divisor = average ? reports.length || 1 : 1;
+  const productionTotal = unitsCompatible && selected.every((product) => product.hasProduction)
+    ? selected.reduce((sum, product) => sum + product.production, 0)
     : null;
-  const rate = dominant.hasSales && dominant.sales !== 0
-    ? dominant.revenueInBaseUnit / dominant.sales
+  const salesTotal = unitsCompatible && selected.every((product) => product.hasSales)
+    ? selected.reduce((sum, product) => sum + product.sales, 0)
     : null;
+  const revenueTotal = selected.reduce((sum, product) => sum + product.revenue, 0);
+  const selectedSalesInBaseUnit = salesTotal === null
+    ? null
+    : selected.reduce(
+      (sum, product) => sum + product.sales * quantityUnitScale(product.unit),
+      0,
+    );
+  const rate = selectedSalesInBaseUnit !== null && selectedSalesInBaseUnit !== 0
+    ? selectedRevenueInBaseUnit / selectedSalesInBaseUnit
+    : null;
+  const names = selected.map((product) => product.name);
 
   return {
-    name: dominant.name,
-    unit: dominant.unit,
-    sales,
-    revenue: average ? dominant.revenue / (reports.length || 1) : dominant.revenue,
+    name: names.join('، '),
+    names,
+    products: selected.map((product) => ({
+      name: product.name,
+      unit: product.unit,
+      revenue: average ? product.revenue / divisor : product.revenue,
+      revenueShare: product.revenueInBaseUnit / totalRevenueInBaseUnit,
+    })),
+    unit: unitsCompatible ? [...units][0] ?? null : null,
+    rateUnit: unitsCompatible ? baseQuantityUnit([...units][0] ?? null) : null,
+    unitsCompatible,
+    production: productionTotal === null ? null : productionTotal / divisor,
+    sales: salesTotal === null ? null : salesTotal / divisor,
+    revenue: revenueTotal / divisor,
     rate,
-    periodSalesTotal: dominant.hasSales ? dominant.sales : null,
-    periodRevenueTotal: dominant.revenue,
+    revenueShare: selectedRevenueInBaseUnit / totalRevenueInBaseUnit,
+    periodProductionTotal: productionTotal,
+    periodSalesTotal: salesTotal,
+    periodSalesInBaseUnit: selectedSalesInBaseUnit,
+    periodRevenueTotal: revenueTotal,
   };
 }
 
@@ -372,8 +437,9 @@ function aggregateDominantProduct(reports, average, revenueScale) {
  *
  * For averages, quantity/revenue metrics are arithmetic monthly averages.
  * Rates are never averaged arithmetically: they are calculated from period
- * revenue divided by period sales quantity. The period's dominant product is
- * the product with the greatest total revenue over the whole period.
+ * revenue divided by period sales quantity. The dominant basket is the
+ * smallest revenue-sorted set of products whose cumulative sales amount is
+ * strictly greater than 50% of product revenue for the whole period.
  */
 export function aggregatePeriod(monthlyReports, months, options = {}) {
   if (!Array.isArray(monthlyReports)) throw new TypeError('monthlyReports must be an array');
@@ -444,12 +510,10 @@ export function aggregatePeriod(monthlyReports, months, options = {}) {
     revenueScale,
   );
   const metrics = {
-    production,
-    sales,
-    revenue,
+    dominantProductProduction: dominantProduct?.production ?? null,
     dominantProductSales: dominantProduct?.sales ?? null,
+    dominantProductRevenue: dominantProduct?.revenue ?? null,
     dominantProductRate: dominantProduct?.rate ?? null,
-    weightedRate,
   };
 
   return {

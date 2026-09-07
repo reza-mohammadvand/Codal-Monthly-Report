@@ -124,14 +124,16 @@ a:focus-visible {
 }
 
 .sidebar {
-  position: sticky;
+  position: fixed;
   top: 0;
+  right: 0;
   z-index: 60;
   grid-column: 2;
   grid-row: 1;
   display: flex;
   flex-direction: column;
   height: 100vh;
+  width: var(--sidebar-width);
   padding: 26px 18px 18px;
   background: rgba(7, 18, 31, 0.92);
   border-left: 1px solid var(--border);
@@ -431,6 +433,19 @@ input[type="checkbox"] {
 .button-icon {
   font-size: 17px;
   line-height: 1;
+}
+
+.button-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding-inline: 6px;
+  color: var(--amber);
+  background: rgba(244, 189, 98, 0.1);
+  border: 1px solid rgba(244, 189, 98, 0.22);
+  border-radius: 999px;
+  font-size: 10px;
 }
 
 .icon-button {
@@ -1068,6 +1083,70 @@ input[type="checkbox"] {
   margin-top: 24px;
 }
 
+.dialog-actions.single-action {
+  grid-template-columns: 1fr;
+}
+
+.dialog-symbol-warning {
+  color: var(--amber);
+  background: rgba(244, 189, 98, 0.09);
+  border-color: rgba(244, 189, 98, 0.22);
+}
+
+.incomplete-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.incomplete-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-height: min(52vh, 430px);
+  margin-top: 20px;
+  padding: 4px;
+  overflow-y: auto;
+  text-align: right;
+}
+
+.incomplete-item {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(18, 38, 61, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.incomplete-symbol {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.incomplete-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incomplete-missing-count {
+  color: var(--amber);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.incomplete-empty {
+  padding: 28px 16px;
+  color: var(--green);
+  background: rgba(77, 214, 155, 0.05);
+  border: 1px dashed rgba(77, 214, 155, 0.2);
+  border-radius: 13px;
+  text-align: center;
+}
+
 .toast {
   position: fixed;
   bottom: 22px;
@@ -1098,6 +1177,24 @@ input[type="checkbox"] {
 
 .toast.error {
   border-color: rgba(255, 113, 133, 0.35);
+}
+
+.toast.busy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-color: rgba(64, 217, 200, 0.4);
+}
+
+.toast.busy::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(64, 217, 200, 0.25);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
 }
 
 .sidebar-backdrop {

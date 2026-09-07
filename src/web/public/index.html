@@ -17,12 +17,14 @@
     <meta property="og:image" content="/og.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="/og.png">
+    <link rel="icon" type="image/png" href="/og.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
     <link rel="stylesheet" href="/styles.css?v=5">
-    <script src="/app.js?v=7" type="module"></script>
+    <script src="/app.js?v=17" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
+    <form id="dashboardActionsForm" class="sr-only" method="post" aria-hidden="true"></form>
 
     <div id="appShell" class="app-shell" aria-busy="true">
       <aside id="industrySidebar" class="sidebar" aria-label="فهرست صنایع">
@@ -82,15 +84,41 @@
           </div>
 
           <div class="topbar-actions" aria-label="عملیات گزارش">
-            <button id="exportButton" class="button button-secondary" type="button" disabled>
+            <button id="incompleteButton" class="button button-ghost" type="button">
+              <span class="button-icon" aria-hidden="true">!</span>
+              نمادهای ناقص
+              <span id="incompleteButtonCount" class="button-count">۰</span>
+            </button>
+            <button
+              id="exportButton"
+              class="button button-secondary"
+              type="submit"
+              form="dashboardActionsForm"
+              formaction="/actions/export"
+              formmethod="post"
+            >
               <span class="button-icon" aria-hidden="true">↓</span>
               خروجی اکسل
             </button>
-            <button id="updateSelectedButton" class="button button-secondary" type="button" disabled>
+            <button
+              id="updateSelectedButton"
+              class="button button-secondary"
+              type="submit"
+              form="dashboardActionsForm"
+              formaction="/actions/update?scope=selected"
+              formmethod="post"
+            >
               <span class="button-icon" aria-hidden="true">↻</span>
               آپدیت انتخاب‌شده‌ها
             </button>
-            <button id="updateAllButton" class="button button-primary" type="button">
+            <button
+              id="updateAllButton"
+              class="button button-primary"
+              type="submit"
+              form="dashboardActionsForm"
+              formaction="/actions/update?scope=all"
+              formmethod="post"
+            >
               <span class="button-icon" aria-hidden="true">↻</span>
               آپدیت همه
             </button>
@@ -135,7 +163,7 @@
                 id="companySearch"
                 type="search"
                 inputmode="search"
-                placeholder="جست‌وجوی نماد یا نام شرکت"
+                placeholder="جست‌وجو در تمام نمادها و شرکت‌ها"
                 autocomplete="off"
               >
             </label>
@@ -160,9 +188,22 @@
         <p id="dialogDescription">اطلاعات نمادها از کدال دریافت و در پایگاه داده جایگزین می‌شود.</p>
         <div class="dialog-actions">
           <button class="button button-ghost" value="cancel" type="submit">انصراف</button>
-          <button id="confirmUpdateButton" class="button button-primary" value="confirm" type="submit">
+          <button id="confirmUpdateButton" class="button button-primary" type="button">
             شروع بروزرسانی
           </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="incompleteDialog" class="confirm-dialog incomplete-dialog" aria-labelledby="incompleteDialogTitle">
+      <form method="dialog">
+        <button class="dialog-close" value="cancel" aria-label="بستن" type="submit">×</button>
+        <span class="dialog-symbol dialog-symbol-warning" aria-hidden="true">!</span>
+        <h2 id="incompleteDialogTitle">نمادهای دارای اطلاعات ناقص</h2>
+        <p id="incompleteDialogDescription">نمادهایی که دست‌کم یک مقدار خالی در جدول دارند.</p>
+        <div id="incompleteList" class="incomplete-list"></div>
+        <div class="dialog-actions single-action">
+          <button class="button button-primary" value="cancel" type="submit">بستن</button>
         </div>
       </form>
     </dialog>

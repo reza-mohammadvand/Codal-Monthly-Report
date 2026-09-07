@@ -25,6 +25,7 @@ function report(year, month, values = {}) {
       {
         name: 'محصول اصلی',
         unit: values.unit ?? 'تن',
+        production: values.production ?? 100,
         sales: values.sales ?? 10,
         revenue: values.revenue ?? 100,
       },
@@ -159,15 +160,15 @@ test('fiscal year end month must be a valid Jalali month', () => {
   );
 });
 
-test('period aggregation averages quantities but weights both rates by sales', () => {
+test('period aggregation averages the dominant basket and weights its rate by sales', () => {
   const reports = [
     report(1405, 1, {
       production: 100,
       sales: 10,
       revenue: 200,
       products: [
-        { name: 'A', unit: 'تن', sales: 5, revenue: 100 },
-        { name: 'B', unit: 'تن', sales: 10, revenue: 100 },
+        { name: 'A', unit: 'تن', production: 8, sales: 5, revenue: 100 },
+        { name: 'B', unit: 'تن', production: 12, sales: 10, revenue: 100 },
       ],
     }),
     report(1405, 2, {
@@ -175,8 +176,8 @@ test('period aggregation averages quantities but weights both rates by sales', (
       sales: 30,
       revenue: 900,
       products: [
-        { name: 'A', unit: 'تن', sales: 10, revenue: 500 },
-        { name: 'B', unit: 'تن', sales: 20, revenue: 400 },
+        { name: 'A', unit: 'تن', production: 16, sales: 10, revenue: 500 },
+        { name: 'B', unit: 'تن', production: 24, sales: 20, revenue: 400 },
       ],
     }),
   ];
@@ -187,13 +188,12 @@ test('period aggregation averages quantities but weights both rates by sales', (
     { average: true },
   );
 
-  assert.equal(result.metrics.production, 200);
-  assert.equal(result.metrics.sales, 20);
-  assert.equal(result.metrics.revenue, 550);
   assert.equal(result.dominantProduct.name, 'A');
+  assert.equal(result.metrics.dominantProductProduction, 12);
   assert.equal(result.metrics.dominantProductSales, 7.5);
+  assert.equal(result.metrics.dominantProductRevenue, 300);
   assert.equal(result.metrics.dominantProductRate, 40_000_000);
-  assert.equal(result.metrics.weightedRate, 27_500_000);
+  assert.ok(result.dominantProduct.revenueShare > 0.5);
   assert.equal(result.meta.complete, true);
 });
 
@@ -217,8 +217,56 @@ test('period dominant product uses cumulative revenue, not monthly winner freque
     reports,
     [{ year: 1405, month: 1 }, { year: 1405, month: 2 }],
   );
-  assert.equal(result.dominantProduct.name, 'A');
-  assert.equal(result.dominantProduct.periodRevenueTotal, 180);
+  assert.equal(result.dominantProduct.name, 'A، B');
+  assert.deepEqual(result.dominantProduct.names, ['A', 'B']);
+  assert.equal(result.dominantProduct.periodRevenueTotal, 280);
+  assert.ok(result.dominantProduct.revenueShare > 0.5);
+});
+
+test('dominant basket keeps adding revenue-ranked products until it strictly exceeds 50 percent', () => {
+  const result = aggregatePeriod(
+    [report(1405, 1, {
+      products: [
+        { name: 'A', unit: 'تن', production: 5, sales: 5, revenue: 50 },
+        { name: 'B', unit: 'تن', production: 3, sales: 3, revenue: 30 },
+        { name: 'C', unit: 'تن', production: 2, sales: 2, revenue: 20 },
+      ],
+    })],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.deepEqual(result.dominantProduct.names, ['A', 'B']);
+  assert.equal(result.dominantProduct.revenueShare, 0.8);
+  assert.equal(result.metrics.dominantProductProduction, 8);
+  assert.equal(result.metrics.dominantProductSales, 8);
+  assert.equal(result.metrics.dominantProductRevenue, 80);
+  assert.equal(result.metrics.dominantProductRate, 10_000_000);
+});
+
+test('a company with one sale product uses that product as its dominant basket', () => {
+  const result = aggregatePeriod(
+    [report(1405, 1, {
+      products: [{ name: 'Only', unit: 'تن', production: 12, sales: 10, revenue: 150 }],
+    })],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.deepEqual(result.dominantProduct.names, ['Only']);
+  assert.equal(result.dominantProduct.revenueShare, 1);
+});
+
+test('dominant basket rate converts prefixed quantity units to their base unit', () => {
+  const result = aggregatePeriod(
+    [report(1405, 1, {
+      unit: 'هزار تن',
+      products: [{ name: 'A', unit: 'هزار تن', production: 3, sales: 2, revenue: 2_000 }],
+    })],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.equal(result.metrics.dominantProductRate, 1_000_000);
+  assert.equal(result.dominantProduct.unit, 'هزار تن');
+  assert.equal(result.dominantProduct.rateUnit, 'تن');
 });
 
 test('period dominant metrics are null when every product has zero revenue', () => {
@@ -236,25 +284,23 @@ test('period dominant metrics are null when every product has zero revenue', () 
     [{ year: 1405, month: 1 }],
   );
 
-  assert.equal(result.metrics.sales, 22);
-  assert.equal(result.metrics.revenue, 0);
-  assert.equal(result.metrics.weightedRate, 0);
   assert.equal(result.dominantProduct, null);
+  assert.equal(result.metrics.dominantProductProduction, null);
   assert.equal(result.metrics.dominantProductSales, null);
+  assert.equal(result.metrics.dominantProductRevenue, null);
   assert.equal(result.metrics.dominantProductRate, null);
 });
 
-test('incompatible units suppress meaningless total quantities and total weighted rate', () => {
+test('incompatible company totals do not suppress a compatible dominant basket', () => {
   const result = aggregatePeriod(
     [report(1405, 1, { unitsCompatible: false, revenue: 500 })],
     [{ year: 1405, month: 1 }],
   );
 
-  assert.equal(result.metrics.production, null);
-  assert.equal(result.metrics.sales, null);
-  assert.equal(result.metrics.revenue, 500);
-  assert.equal(result.metrics.weightedRate, null);
   assert.equal(result.dominantProduct.name, 'محصول اصلی');
+  assert.equal(result.metrics.dominantProductProduction, 100);
+  assert.equal(result.metrics.dominantProductSales, 10);
+  assert.equal(result.metrics.dominantProductRevenue, 500);
 });
 
 test('missing reports are exposed in metadata and do not fabricate zeroes', () => {
@@ -267,7 +313,7 @@ test('missing reports are exposed in metadata and do not fabricate zeroes', () =
   assert.equal(result.meta.reportCount, 1);
   assert.equal(result.meta.complete, false);
   assert.deepEqual(result.meta.missingMonths, [{ year: 1405, month: 2 }]);
-  assert.equal(result.metrics.production, 100);
+  assert.equal(result.metrics.dominantProductProduction, 100);
 });
 
 test('growth is null for missing or zero baselines', () => {
@@ -316,9 +362,9 @@ test('all three growth groups use fiscal YTD and target-month MoM comparisons', 
     { fiscalYearEndMonth: 6 },
   );
 
-  assert.equal(result.growth.targetYoY.production, 1);
-  assert.ok(Math.abs(result.growth.ytdYoY.production - (10 / 11)) < Number.EPSILON);
-  assert.equal(result.growth.targetMoM.production, 1);
+  assert.equal(result.growth.targetYoY.dominantProductProduction, 1);
+  assert.ok(Math.abs(result.growth.ytdYoY.dominantProductProduction - (10 / 11)) < Number.EPSILON);
+  assert.equal(result.growth.targetMoM.dominantProductProduction, 1);
   assert.equal(result.periods.priorYearFullYearAverage.meta.complete, true);
   assert.equal(result.periods.currentYearYtdAverage.meta.reportCount, 11);
   assert.equal(result.comparisonPeriods, undefined);

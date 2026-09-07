@@ -19,13 +19,13 @@ import { StartIntervalGate, normalizePersianText, sleep } from "./utils.js";
 import { writeReportWorkbook } from "./excel.js";
 
 const METRIC_MAP = Object.freeze({
-  totalProduction: "production",
-  totalSales: "sales",
-  totalRevenue: "revenue",
+  dominantProduction: "dominantProductProduction",
   dominantSales: "dominantProductSales",
+  dominantRevenue: "dominantProductRevenue",
   dominantRate: "dominantProductRate",
-  weightedRate: "weightedRate",
 });
+
+export const CALCULATION_VERSION = "dominant-basket-v3";
 
 export const DEFAULT_PILOT_SYMBOLS = Object.freeze(["فولاد", "فملی", "شپنا", "کگل"]);
 
@@ -160,7 +160,10 @@ function normalizePeriodForExcel(period, allowPartial) {
     unit: period.totals.unit,
     unitsCompatible: period.totals.unitsCompatible,
     dominantProductName: period.dominantProduct?.name ?? null,
+    dominantProductNames: period.dominantProduct?.names ?? [],
     dominantProductUnit: period.dominantProduct?.unit ?? null,
+    dominantProductRateUnit: period.dominantProduct?.rateUnit ?? null,
+    dominantProductRevenueShare: period.dominantProduct?.revenueShare ?? null,
     complete: period.meta.complete,
     reportCount: period.meta.reportCount,
     requestedMonthCount: period.meta.requestedMonthCount,
@@ -168,25 +171,13 @@ function normalizePeriodForExcel(period, allowPartial) {
   };
 }
 
-function sameText(left, right) {
-  return normalizePersianText(left) && normalizePersianText(left) === normalizePersianText(right);
-}
-
-function buildGrowthPeriod(numerator, denominator) {
+export function buildGrowthPeriod(numerator, denominator) {
   const result = {};
   for (const metric of Object.keys(METRIC_MAP)) {
-    let comparable = true;
-    if (["totalProduction", "totalSales", "weightedRate"].includes(metric)) {
-      comparable = numerator.unitsCompatible && denominator.unitsCompatible
-        && sameText(numerator.unit, denominator.unit);
-    }
-    if (["dominantSales", "dominantRate"].includes(metric)) {
-      comparable = sameText(numerator.dominantProductName, denominator.dominantProductName)
-        && sameText(numerator.dominantProductUnit, denominator.dominantProductUnit);
-    }
-    result[metric] = comparable
-      ? calculateGrowth(numerator.metrics[metric], denominator.metrics[metric])
-      : null;
+    result[metric] = calculateGrowth(
+      numerator.metrics[metric],
+      denominator.metrics[metric],
+    );
   }
   return result;
 }
@@ -354,8 +345,15 @@ export function summarizeCompanyStatuses(companies) {
   return summary;
 }
 
-async function resolveCompanyFiscalContext({ company, client, executionMonth, asOf, existingCompany }) {
-  const recentReports = await client.searchMonthlyReports({
+async function resolveCompanyFiscalContext({
+  company,
+  client,
+  executionMonth,
+  asOf,
+  existingCompany,
+  preloadedReports = null,
+}) {
+  const recentReports = preloadedReports ?? await client.searchMonthlyReports({
     symbol: company.symbol,
     fromDate: `${Number(asOf.year) - 2}/01/01`,
     toDate: formatAsOf(asOf),
@@ -425,7 +423,43 @@ function reportIdentity(report) {
   return value == null ? null : String(value);
 }
 
-async function processCompany({ company, client, context, asOf, allowPartial, existingCompany }) {
+function latestStoredReportMonth(existingCompany) {
+  return (Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
+    .filter((report) => Number.isInteger(Number(report?.year)) && Number.isInteger(Number(report?.month)))
+    .sort((left, right) => Number(right.year) - Number(left.year) || Number(right.month) - Number(left.month))[0]
+    ?? null;
+}
+
+async function checkForNewMonthlyReport({ company, client, existingCompany, asOf }) {
+  const latestStored = latestStoredReportMonth(existingCompany);
+  if (!latestStored) return { hasNewReport: true, reports: null };
+  const storedIdentities = new Set(
+    existingCompany.monthlyReports.map(reportIdentity).filter(Boolean),
+  );
+  const reports = await client.searchMonthlyReports({
+    symbol: company.symbol,
+    fromDate: `${Number(latestStored.year)}/${String(Number(latestStored.month)).padStart(2, "0")}/01`,
+    toDate: formatAsOf(asOf),
+    allPages: false,
+  });
+  return {
+    hasNewReport: reports.some((report) => {
+      const identity = reportIdentity(report);
+      return !identity || !storedIdentities.has(identity);
+    }),
+    reports,
+  };
+}
+
+async function processCompany({
+  company,
+  client,
+  context,
+  asOf,
+  allowPartial,
+  existingCompany,
+  forceReparseReports = false,
+}) {
   const {
     definitions,
     financialYears,
@@ -473,7 +507,11 @@ async function processCompany({ company, client, context, asOf, allowPartial, ex
     }
     const candidateErrors = [];
     for (const report of candidates) {
-      if (storedReport && reportIdentity(report) === reportIdentity(storedReport)) {
+      if (
+        !forceReparseReports
+        && storedReport
+        && reportIdentity(report) === reportIdentity(storedReport)
+      ) {
         return { report: storedReport, reused: true };
       }
       try {
@@ -517,6 +555,7 @@ async function processCompany({ company, client, context, asOf, allowPartial, ex
     foundReportCount,
     parsedReportCount,
   });
+  const calculationChanged = existingCompany?.calculationVersion !== CALCULATION_VERSION;
   return {
     ...company,
     ...excelData,
@@ -535,10 +574,13 @@ async function processCompany({ company, client, context, asOf, allowPartial, ex
       ...report.source,
     })),
     monthlyReports,
+    calculationVersion: CALCULATION_VERSION,
     downloadedReportCount,
     newOrChangedReportCount,
     updateAction: existingCompany && newOrChangedReportCount === 0
-      ? "unchanged"
+      ? forceReparseReports
+        ? "refreshed"
+        : calculationChanged ? "recalculated" : "unchanged"
       : "updated",
     foundReportCount,
     parsedReportCount,
@@ -622,6 +664,11 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     (Array.isArray(options.existingCompanies) ? options.existingCompanies : [])
       .map((company) => [normalizeCodalText(company?.symbol), company]),
   );
+  const forceReparseSymbolSet = new Set(
+    (Array.isArray(options.forceReparseSymbols) ? options.forceReparseSymbols : [])
+      .map(normalizeCodalText)
+      .filter(Boolean),
+  );
 
   await emitProgress(options.onProgress, {
     type: "companies-selected",
@@ -637,6 +684,8 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     targetMonth: definitions.targetMonth,
     definitions,
     allowPartial: options.allowPartial ?? false,
+    calculationVersion: CALCULATION_VERSION,
+    forceFullRefresh: options.forceReparseReports === true,
     companyCatalogCount,
     sourceUrl: "https://www.codal.ir/",
     generatedAt: new Date(generatedAtValue).toISOString(),
@@ -646,15 +695,33 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     let result;
     let context = null;
     const existingCompany = existingBySymbol.get(normalizeCodalText(company.symbol)) ?? null;
+    const forceCompanyReparse = options.forceReparseReports === true
+      || forceReparseSymbolSet.has(normalizeCodalText(company.symbol));
     try {
-      context = await resolveCompanyFiscalContext({
-        company,
-        client,
-        executionMonth: definitions.executionMonth,
-        asOf,
-        existingCompany,
-      });
-      result = context.noReports
+      let quickCheck = null;
+      const canUseIdentityOnlyCheck = existingCompany
+        && !forceCompanyReparse
+        && existingCompany.calculationVersion === CALCULATION_VERSION;
+      if (canUseIdentityOnlyCheck) {
+        quickCheck = await checkForNewMonthlyReport({ company, client, existingCompany, asOf });
+      }
+      if (quickCheck && !quickCheck.hasNewReport) {
+        result = {
+          ...existingCompany,
+          downloadedReportCount: 0,
+          newOrChangedReportCount: 0,
+          updateAction: "unchanged",
+        };
+      } else {
+        context = await resolveCompanyFiscalContext({
+          company,
+          client,
+          executionMonth: definitions.executionMonth,
+          asOf,
+          existingCompany,
+          preloadedReports: quickCheck?.reports ?? null,
+        });
+        result = context.noReports
         ? existingCompany
           ? {
               ...existingCompany,
@@ -677,6 +744,7 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
             requiredReportCount: 0,
             coverageRatio: 0,
             monthlyReports: [],
+            calculationVersion: CALCULATION_VERSION,
             newOrChangedReportCount: 0,
             updateAction: "updated",
             definitions: null,
@@ -694,7 +762,9 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
             asOf,
             allowPartial: options.allowPartial ?? false,
             existingCompany,
+            forceReparseReports: forceCompanyReparse,
           });
+      }
     } catch (error) {
       result = {
         ...company,
@@ -758,7 +828,7 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
       + `${fiscalWindow})`,
     );
     const companyDelayMs = Math.max(0, Number(options.companyDelayMs) || 0);
-    if (completed < companies.length && companyDelayMs > 0) {
+    if (completed < companies.length && companyDelayMs > 0 && result.updateAction !== "unchanged") {
       await emitProgress(options.onProgress, {
         type: "company-delay",
         completed,

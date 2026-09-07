@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 
 const CSS_FILE = new URL("../src/web/public/styles.css", import.meta.url);
 const APP_FILE = new URL("../src/web/public/app.js", import.meta.url);
+const INDEX_FILE = new URL("../src/web/public/index.html", import.meta.url);
 
 test("dashboard keeps the desktop sidebar on the right with brighter typography", async () => {
   const css = await fs.readFile(CSS_FILE, "utf8");
@@ -30,8 +31,57 @@ test("company summaries control animated, keyboard-accessible detail panels", as
   assert.match(app, /event\.key !== " "/);
   assert.match(app, /const faYear = new Intl\.NumberFormat\("fa-IR", \{[^}]*useGrouping: false,/s);
   assert.match(app, /faYear\.format\(year\)/);
-  assert.equal((app.match(/محصول غالب:/g) ?? []).length, 1);
+  assert.equal((app.match(/سبد غالب:/g) ?? []).length, 1);
   assert.doesNotMatch(app, /metric\.dominant \? period\?\.dominantProductName/);
+});
+
+test("selecting companies immediately enables selected update and Excel export", async () => {
+  const [app, html] = await Promise.all([
+    fs.readFile(APP_FILE, "utf8"),
+    fs.readFile(INDEX_FILE, "utf8"),
+  ]);
+  assert.match(app, /dashboardContent\.addEventListener\("input"/);
+  assert.match(app, /industryList\.addEventListener\("input"/);
+  assert.match(app, /exportButton\.disabled = busy/);
+  assert.match(app, /updateSelectedButton\.disabled = busy/);
+  assert.match(app, /exportButton\.setAttribute\("aria-disabled", String\(count === 0 \|\| busy\)\)/);
+  assert.match(app, /event\.target\.closest\("\[data-company-checkbox\]"\)/);
+  assert.match(app, /function syncSelectionFromPage\(\)/);
+  assert.match(app, /dashboardContent\.querySelectorAll\("\[data-company-checkbox\]"\)/);
+  assert.match(app, /if \(scope === "selected"\) syncSelectionFromPage\(\)/);
+  assert.match(app, /async function exportSelected\(\) \{\s*syncSelectionFromPage\(\);/s);
+  assert.match(app, /card\.classList\.toggle\("selected", checked\)/);
+  assert.match(app, /exportButton\.onclick = \(event\) =>/);
+  assert.match(app, /updateSelectedButton\.onclick = \(event\) =>/);
+  assert.match(app, /requestUpdate\("selected"\)/);
+  assert.match(app, /confirmUpdateButton\.onclick = \(\) =>/);
+  assert.match(app, /function syncNativeActionForm\(\)/);
+  assert.match(app, /input\.name = "symbols"/);
+  assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
+  assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
+  assert.match(html, /app\.js\?v=17" defer/);
+  assert.match(html, /id="dashboardActionsForm"/);
+  assert.match(html, /formaction="\/actions\/export"/);
+  assert.match(html, /formaction="\/actions\/update\?scope=selected"/);
+  assert.match(html, /formaction="\/actions\/update\?scope=all"/);
+  assert.match(html, /id="incompleteButton"/);
+  assert.match(app, /function openIncompleteDialog\(\)/);
+  assert.match(app, /نتایج جست‌وجو در همه صنایع/);
+  assert.doesNotMatch(html, /type="module"/);
+  assert.doesNotMatch(html, /runtime-badge|نسخه ۱۵: رابط آماده/);
+});
+
+test("every statically queried UI element exists in the dashboard HTML", async () => {
+  const [app, html] = await Promise.all([
+    fs.readFile(APP_FILE, "utf8"),
+    fs.readFile(INDEX_FILE, "utf8"),
+  ]);
+  const queriedIds = [...app.matchAll(/document\.querySelector\("#([^"]+)"\)/g)]
+    .map((match) => match[1]);
+  assert.ok(queriedIds.length > 0);
+  for (const id of queriedIds) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
+  }
 });
 
 test("bulk updates expose all-company scope and keep polling progress", async () => {

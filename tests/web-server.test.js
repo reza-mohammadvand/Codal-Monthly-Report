@@ -55,6 +55,7 @@ test("web server serves the dashboard shell, health and persisted dashboard API"
     assert.match(page.headers.get("content-type"), /^text\/html/);
     assert.match(await page.text(), /Codal/);
     assert.match(page.headers.get("content-security-policy"), /default-src 'self'/);
+    assert.equal(page.headers.get("cache-control"), "no-store");
 
     const health = await fetch(`${baseUrl}/api/health`).then((response) => response.json());
     assert.equal(health.ok, true);
@@ -89,6 +90,38 @@ test("web server streams selected Excel output with attachment headers", async (
     assert.match(response.headers.get("content-type"), /spreadsheetml/);
     assert.match(response.headers.get("content-disposition"), /codal-selected-1405-05\.xlsx/);
     assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [80, 75, 3, 4]);
+  });
+});
+
+test("native form fallbacks export and update when client-side handlers are unavailable", async () => {
+  const service = fakeService();
+  await withServer(service, async (baseUrl) => {
+    const form = new URLSearchParams();
+    form.append("symbols", "فولاد");
+
+    const exported = await fetch(`${baseUrl}/actions/export`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(exported.status, 200);
+    assert.match(exported.headers.get("content-type"), /spreadsheetml/);
+
+    const selected = await fetch(`${baseUrl}/actions/update?scope=selected`, {
+      method: "POST",
+      body: form,
+      redirect: "manual",
+    });
+    assert.equal(selected.status, 303);
+    assert.equal(selected.headers.get("location"), "/?action=updated");
+    assert.deepEqual(service.updates[0], { scope: "selected", symbols: ["فولاد"] });
+
+    const all = await fetch(`${baseUrl}/actions/update?scope=all`, {
+      method: "POST",
+      body: new URLSearchParams(),
+      redirect: "manual",
+    });
+    assert.equal(all.status, 303);
+    assert.deepEqual(service.updates[1], { scope: "all" });
   });
 });
 

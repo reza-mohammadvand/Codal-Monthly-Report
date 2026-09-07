@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CALCULATION_VERSION,
   DEFAULT_PILOT_SYMBOLS,
+  buildGrowthPeriod,
   classifyCoverage,
   collectMonthlyReportData,
   formatCompanySymbolForConsole,
@@ -10,6 +12,36 @@ import {
   selectCompanies,
   summarizeCompanyStatuses,
 } from "../src/pipeline.js";
+
+test("growth remains calculable when the dominant basket changes between periods", () => {
+  const growth = buildGrowthPeriod(
+    {
+      dominantProductName: "A، B",
+      dominantProductUnit: "تن",
+      metrics: {
+        dominantProduction: 150,
+        dominantSales: 120,
+        dominantRevenue: 300,
+        dominantRate: 2.5,
+      },
+    },
+    {
+      dominantProductName: "A",
+      dominantProductUnit: "تن",
+      metrics: {
+        dominantProduction: 100,
+        dominantSales: 100,
+        dominantRevenue: 200,
+        dominantRate: 2,
+      },
+    },
+  );
+
+  assert.equal(growth.dominantProduction, 0.5);
+  assert.ok(Math.abs(growth.dominantSales - 0.2) < Number.EPSILON);
+  assert.equal(growth.dominantRevenue, 0.5);
+  assert.equal(growth.dominantRate, 0.25);
+});
 
 function company(symbol, state = 0, overrides = {}) {
   return {
@@ -349,6 +381,7 @@ test("incremental updates reuse stored monthly data when Codal has no newer fili
     status: "کامل",
     fiscalYearEndMonth: 12,
     financialYears: ["1405/12/29"],
+    calculationVersion: CALCULATION_VERSION,
     monthlyReports,
   };
 
@@ -369,6 +402,13 @@ test("incremental updates reuse stored monthly data when Codal has no newer fili
   assert.equal(processed.downloadedReportCount, 0);
   assert.equal(processed.parsedReportCount, 17);
   assert.equal(processed.monthlyReports.length, 17);
+  assert.equal(processed.calculationVersion, CALCULATION_VERSION);
+  assert.deepEqual(Object.keys(processed.periods.target.metrics), [
+    "dominantProduction",
+    "dominantSales",
+    "dominantRevenue",
+    "dominantRate",
+  ]);
 
   reports.at(-1).TracingNo = 99_999;
   client.fetchAndParseReport = async () => {

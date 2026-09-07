@@ -42,7 +42,7 @@ function sendJson(response, statusCode, payload) {
   response.end(body);
 }
 
-async function readJsonBody(request) {
+async function readBody(request) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -52,12 +52,38 @@ async function readJsonBody(request) {
     }
     chunks.push(chunk);
   }
-  if (!chunks.length) return {};
+  return chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
+}
+
+async function readJsonBody(request) {
+  const body = await readBody(request);
+  if (!body.length) return {};
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(body.toString("utf8"));
   } catch {
     throw new WebServiceError("بدنه JSON درخواست معتبر نیست.", 400, "INVALID_JSON");
   }
+}
+
+async function readFormBody(request) {
+  const body = await readBody(request);
+  const params = new URLSearchParams(body.toString("utf8"));
+  return { symbols: params.getAll("symbols").filter(Boolean) };
+}
+
+function sendExcel(response, exported) {
+  response.statusCode = 200;
+  response.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  response.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${exported.filename.replace(/[^A-Za-z0-9._-]/g, "-")}"`,
+  );
+  response.setHeader("Content-Length", exported.buffer.length);
+  response.setHeader("Cache-Control", "no-store");
+  response.end(exported.buffer);
 }
 
 function resolveStaticPath(publicDir, pathname) {
@@ -89,7 +115,7 @@ async function sendStaticFile(request, response, publicDir, pathname) {
     response.setHeader("Content-Length", data.length);
     response.setHeader(
       "Cache-Control",
-      path.basename(filePath) === "index.html" ? "no-cache" : "public, max-age=3600",
+      "no-store",
     );
     response.end(request.method === "HEAD" ? undefined : data);
     return true;
@@ -149,18 +175,23 @@ export function createWebServer({
       if (request.method === "POST" && pathname === "/api/export") {
         const body = await readJsonBody(request);
         const exported = await service.createExcelExport(body.symbols);
-        response.statusCode = 200;
-        response.setHeader(
-          "Content-Type",
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        );
-        response.setHeader(
-          "Content-Disposition",
-          `attachment; filename="${exported.filename.replace(/[^A-Za-z0-9._-]/g, "-")}"`,
-        );
-        response.setHeader("Content-Length", exported.buffer.length);
+        sendExcel(response, exported);
+        return;
+      }
+      if (request.method === "POST" && pathname === "/actions/export") {
+        const body = await readFormBody(request);
+        const exported = await service.createExcelExport(body.symbols);
+        sendExcel(response, exported);
+        return;
+      }
+      if (request.method === "POST" && pathname === "/actions/update") {
+        const body = await readFormBody(request);
+        const scope = requestUrl.searchParams.get("scope") === "all" ? "all" : "selected";
+        await service.update({ scope, ...(scope === "selected" ? { symbols: body.symbols } : {}) });
+        response.statusCode = 303;
+        response.setHeader("Location", "/?action=updated");
         response.setHeader("Cache-Control", "no-store");
-        response.end(exported.buffer);
+        response.end();
         return;
       }
       if ((request.method === "GET" || request.method === "HEAD") && !pathname.startsWith("/api/")) {

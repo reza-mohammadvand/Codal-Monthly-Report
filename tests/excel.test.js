@@ -8,12 +8,10 @@ import { createReportWorkbook, excelReportSchema } from '../src/excel.js';
 function period(multiplier, { dominantRate = 2_000_000 } = {}) {
   return {
     metrics: {
-      totalProduction: 10 * multiplier,
-      totalSales: 8 * multiplier,
-      totalRevenue: 16 * multiplier,
+      dominantProduction: 10 * multiplier,
       dominantSales: 5 * multiplier,
+      dominantRevenue: 16 * multiplier,
       dominantRate,
-      weightedRate: 2_000_000,
     },
     unit: 'تن',
     dominantProductName: 'محصول الف',
@@ -43,8 +41,8 @@ test('Excel report serializes with a compact layout and auditable growth formula
         },
         growth: {
           monthOverMonth: {
-            totalProduction: -0.5,
-            totalSales: null,
+            dominantProduction: -0.5,
+            dominantSales: null,
           },
         },
       }],
@@ -74,7 +72,7 @@ test('Excel report serializes with a compact layout and auditable growth formula
 
   const coverSheet = reopened.getWorksheet('راهنما');
   const detailedGuideRows = [
-    ...Array.from({ length: 8 }, (_, index) => 7 + index),
+    ...Array.from({ length: 6 }, (_, index) => 7 + index),
     ...Array.from({ length: 7 }, (_, index) => 16 + index),
   ];
   for (const rowNumber of detailedGuideRows) {
@@ -89,18 +87,18 @@ test('Excel report serializes with a compact layout and auditable growth formula
   const sheet = reopened.worksheets[1];
   assert.equal(sheet.views[0].rightToLeft, true);
   assert.equal(sheet.views[0].xSplit, 3);
-  assert.equal(sheet.rowCount, 10);
+  assert.equal(sheet.rowCount, 8);
   assert.equal(sheet.columnCount, 14);
   assert.ok(!sheet.autoFilter);
-  assert.ok(sheet.model.merges.includes('A5:A10'));
-  assert.ok(sheet.model.merges.includes('B5:B10'));
-  assert.ok(sheet.model.merges.includes('E8:E9'));
+  assert.ok(sheet.model.merges.includes('A5:A8'));
+  assert.ok(sheet.model.merges.includes('B5:B8'));
+  assert.ok(sheet.model.merges.includes('E5:E8'));
   assert.equal(sheet.getCell('A5').value, 'نماد');
-  assert.equal(sheet.getCell('A10').master.address, 'A5');
-  assert.equal(sheet.getCell('B10').master.address, 'B5');
-  assert.equal(sheet.getCell('E8').value, 'محصول الف');
-  assert.equal(sheet.getCell('E9').master.address, 'E8');
-  assert.equal(sheet.getCell('C10').value, 'نرخ فروش موزون کل');
+  assert.equal(sheet.getCell('A8').master.address, 'A5');
+  assert.equal(sheet.getCell('B8').master.address, 'B5');
+  assert.equal(sheet.getCell('E5').value, 'محصول الف');
+  assert.equal(sheet.getCell('E8').master.address, 'E5');
+  assert.equal(sheet.getCell('C8').value, 'نرخ فروش سبد غالب');
   assert.equal(sheet.getCell('G4').value, 'میانگین سال مالی تا\nمرداد 1404');
   assert.equal(sheet.getCell('H4').value, 'میانگین ۱۲ماهه\nسال مالی قبل');
   assert.equal(sheet.getCell('K4').value, 'میانگین سال مالی تا\nمرداد 1405');
@@ -110,10 +108,10 @@ test('Excel report serializes with a compact layout and auditable growth formula
   assert.equal(sheet.getCell('N5').value.formula, 'IF(OR(I5="",I5=0,J5=""),"",J5/I5-1)');
   assert.equal(sheet.getCell('N5').value.result, -0.5);
   assert.equal(sheet.getCell('N6').value, null);
-  assert.equal(sheet.getCell('L9').value, null);
+  assert.equal(sheet.getCell('L8').value, null);
   assert.equal(sheet.getCell('F5').numFmt, '#,##0;[Red](#,##0);-');
   assert.equal(sheet.getCell('F6').numFmt, '#,##0;[Red](#,##0);-');
-  assert.equal(sheet.getCell('F8').numFmt, '#,##0;[Red](#,##0);-');
+  assert.equal(sheet.getCell('F7').numFmt, '#,##0;[Red](#,##0);-');
   assert.deepEqual(excelReportSchema.growth[2], {
     key: 'targetMoM',
     aliases: ['targetMoM', 'monthOverMonth'],

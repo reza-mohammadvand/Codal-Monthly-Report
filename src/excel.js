@@ -88,28 +88,13 @@ const GROWTH_COLUMNS = Object.freeze([
 
 const METRICS = Object.freeze([
   {
-    key: 'totalProduction',
-    aliases: ['totalProduction', 'production', 'total_production'],
-    label: 'مقدار تولید کل',
-    description: 'جمع مقدار تولید شرکت، فقط در صورت یکسان و قابل‌جمع بودن واحد محصولات.',
-    defaultUnit: 'واحد گزارش',
+    key: 'dominantProduction',
+    aliases: ['dominantProduction', 'dominantProductProduction'],
+    label: 'مقدار تولید سبد غالب',
+    description: 'مقدار تولید کوچک‌ترین سبد محصولات که بر اساس مبلغ فروش مرتب شده و بیش از ۵۰٪ مبلغ فروش دوره را پوشش می‌دهد.',
+    defaultUnit: 'واحد محصول',
     numberFormat: '#,##0;[Red](#,##0);-',
-  },
-  {
-    key: 'totalSales',
-    aliases: ['totalSales', 'sales', 'total_sales'],
-    label: 'مقدار فروش کل',
-    description: 'جمع مقدار فروش شرکت، فقط در صورت یکسان و قابل‌جمع بودن واحد محصولات.',
-    defaultUnit: 'واحد گزارش',
-    numberFormat: '#,##0;[Red](#,##0);-',
-  },
-  {
-    key: 'totalRevenue',
-    aliases: ['totalRevenue', 'revenue', 'salesAmount', 'amount', 'total_revenue'],
-    label: 'مبلغ فروش کل',
-    description: 'مبلغ فروش ثبت‌شده در گزارش فعالیت ماهانه کدال.',
-    defaultUnit: 'میلیون ریال',
-    numberFormat: '#,##0;[Red](#,##0);-',
+    dominantProduct: true,
   },
   {
     key: 'dominantSales',
@@ -119,9 +104,23 @@ const METRICS = Object.freeze([
       'mainProductSales',
       'dominant_sales',
     ],
-    label: 'مقدار فروش محصول غالب',
-    description: 'مقدار فروش محصولی که بیشترین مبلغ فروش را در همان دوره داشته است.',
+    label: 'مقدار فروش سبد غالب',
+    description: 'مقدار فروش محصولات منتخب در سبد غالب؛ در صورت ناسازگاری واحد محصولات خالی می‌ماند.',
     defaultUnit: 'واحد محصول',
+    numberFormat: '#,##0;[Red](#,##0);-',
+    dominantProduct: true,
+  },
+  {
+    key: 'dominantRevenue',
+    aliases: [
+      'dominantRevenue',
+      'dominantProductRevenue',
+      'mainProductRevenue',
+      'dominant_revenue',
+    ],
+    label: 'مبلغ فروش سبد غالب',
+    description: 'جمع مبلغ فروش محصولات منتخب؛ این سبد حداقل تعداد محصول لازم برای عبور از سهم تجمعی ۵۰٪ است.',
+    defaultUnit: 'میلیون ریال',
     numberFormat: '#,##0;[Red](#,##0);-',
     dominantProduct: true,
   },
@@ -133,19 +132,11 @@ const METRICS = Object.freeze([
       'mainProductRate',
       'dominant_rate',
     ],
-    label: 'نرخ فروش محصول غالب',
-    description: 'نرخ فروش محصول دارای بیشترین مبلغ فروش در همان دوره.',
+    label: 'نرخ فروش سبد غالب',
+    description: 'مبلغ فروش ریالی سبد غالب تقسیم بر مقدار فروش همان سبد؛ میانگین ساده نرخ محصولات نیست.',
     defaultUnit: 'ریال / واحد محصول',
     numberFormat: '#,##0;[Red](#,##0);-',
     dominantProduct: true,
-  },
-  {
-    key: 'weightedRate',
-    aliases: ['weightedRate', 'weightedAverageRate', 'companyWeightedRate'],
-    label: 'نرخ فروش موزون کل',
-    description: 'جمع مبلغ فروش به ریال تقسیم بر جمع مقدار فروش؛ میانگین ساده نرخ محصولات نیست.',
-    defaultUnit: 'ریال / واحد گزارش',
-    numberFormat: '#,##0;[Red](#,##0);-',
   },
 ]);
 
@@ -249,11 +240,11 @@ function rawUnit(period, metric, rawValue) {
     ?? firstDefined(period, metric.aliases.map((alias) => `${alias}Unit`));
   if (textValue(metricSpecificUnit)) return textValue(metricSpecificUnit);
 
-  if (metric.key === 'totalRevenue') {
+  if (metric.key === 'dominantRevenue') {
     return textValue(period?.revenueUnit ?? period?.meta?.revenueUnit, metric.defaultUnit);
   }
 
-  if (metric.key === 'dominantSales') {
+  if (metric.key === 'dominantProduction' || metric.key === 'dominantSales') {
     return textValue(
       period?.dominantProductUnit
         ?? period?.dominantProduct?.unit
@@ -265,7 +256,10 @@ function rawUnit(period, metric, rawValue) {
 
   if (metric.key === 'dominantRate') {
     const unit = textValue(
-      period?.dominantProductUnit
+      period?.dominantProductRateUnit
+        ?? period?.dominantProduct?.rateUnit
+        ?? period?.meta?.dominantProductRateUnit
+        ?? period?.dominantProductUnit
         ?? period?.dominantProduct?.unit
         ?? period?.meta?.dominantProductUnit
         ?? (typeof period?.unit === 'string' ? period.unit : null),
@@ -276,9 +270,6 @@ function rawUnit(period, metric, rawValue) {
   const totalUnit = typeof period?.unit === 'string'
     ? period.unit
     : period?.totals?.unit ?? period?.meta?.unit;
-  if (metric.key === 'weightedRate') {
-    return textValue(totalUnit) ? `ریال / ${textValue(totalUnit)}` : metric.defaultUnit;
-  }
   return textValue(totalUnit, metric.defaultUnit);
 }
 
@@ -439,7 +430,7 @@ function periodSourceUrl(period) {
 function buildCellNote(period, metricEntry, metric) {
   const lines = [];
   if (metric.dominantProduct && metricEntry.productName) {
-    lines.push(`محصول غالب این دوره: ${metricEntry.productName}`);
+    lines.push(`سبد غالب این دوره: ${metricEntry.productName}`);
   }
   if (metric.dominantProduct && metricEntry.unit) {
     lines.push(`واحد این دوره: ${metricEntry.unit}`);
@@ -550,7 +541,7 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
     'نام شرکت',
     'شاخص',
     'واحد',
-    'محصول غالب (ماه مبنا)',
+    'سبد غالب (ماه مبنا)',
     ...compactColumnLabels(columnLabels),
   ];
   const header = sheet.getRow(HEADER_ROW);
@@ -606,7 +597,7 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
       : null;
     row.getCell(3).value = metric.label;
     row.getCell(4).value = resolveMetricUnit(entries, metric);
-    row.getCell(5).value = metricIndex === 3 ? targetProduct : '';
+    row.getCell(5).value = metricIndex === 0 ? targetProduct : '';
 
     entries.forEach((entry, periodIndex) => {
       const cell = row.getCell(6 + periodIndex);
@@ -685,7 +676,7 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
 
   sheet.mergeCells(`A${startRow}:A${blockEndRow}`);
   sheet.mergeCells(`B${startRow}:B${blockEndRow}`);
-  sheet.mergeCells(`E${startRow + 3}:E${startRow + 4}`);
+  sheet.mergeCells(`E${startRow}:E${blockEndRow}`);
   const identityFill = statusHasIssue(status) ? COLORS.amberLight : COLORS.tealLight;
   for (const cell of [sheet.getCell(startRow, 1), sheet.getCell(startRow, 2)]) {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: identityFill } };
@@ -698,7 +689,7 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
     };
     cell.border = { bottom: borderBottom('medium') };
   }
-  const productCell = sheet.getCell(startRow + 3, 5);
+  const productCell = sheet.getCell(startRow, 5);
   productCell.font = { name: 'Tahoma', size: 8, color: { argb: COLORS.teal } };
   productCell.alignment = {
     horizontal: 'center',
@@ -828,7 +819,7 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
   }
 
   sheet.mergeCells('A6:N6');
-  sheet.getCell('A6').value = 'شش شاخص اصلی و نه ستون مقایسه‌ای بدون تغییر حفظ شده‌اند؛ جزئیات منابع در شیت مخفی «ممیزی منابع» موجود است.';
+  sheet.getCell('A6').value = 'چهار شاخص سبد غالب و نه ستون مقایسه‌ای نمایش داده می‌شوند؛ جزئیات منابع در شیت مخفی «ممیزی منابع» موجود است.';
   sheet.getCell('A6').font = { name: 'Tahoma', size: 9, color: { argb: COLORS.gray700 } };
   sheet.getCell('A6').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.blueLight } };
   sheet.getCell('A6').alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, readingOrder: 'rtl' };
@@ -852,7 +843,7 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
     sheet.getCell(rowNumber, 3).value = metric.description;
     sheet.getCell(rowNumber, 9).value = metric.defaultUnit;
     sheet.getCell(rowNumber, 11).value = metric.dominantProduct
-      ? 'محصول غالب ممکن است بین دوره‌ها تغییر کند؛ نام دقیق هر دوره در یادداشت سلول است.'
+      ? 'سبد غالب ممکن است بین دوره‌ها تغییر کند؛ نام محصولات دقیق هر دوره در یادداشت سلول است.'
       : '';
     for (const column of [1, 3, 9, 11]) {
       const cell = sheet.getCell(rowNumber, column);
@@ -869,9 +860,9 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
     'ماه مبنا همیشه یک ماه عقب‌تر از ماه اجرای برنامه است؛ بنابراین هنگام اجرا در شهریور، گزارش مرداد بررسی می‌شود.',
     'بازه‌های میانگین برای هر نماد از ابتدای سال مالی همان شرکت ساخته می‌شوند؛ بنابراین نقطه شروع شرکت‌ها می‌تواند متفاوت باشد.',
     'رشد برابر است با «مقدار دوره جدید ÷ مقدار دوره مقایسه − ۱». اگر مقدار مبنا صفر یا یکی از دو مقدار ناموجود باشد، سلول رشد خالی می‌ماند.',
-    'محصول غالب در هر دوره محصولی است که بیشترین مبلغ فروش همان دوره را دارد؛ برای میانگین‌های چندماهه، انتخاب بر مبنای مبلغ کل همان بازه انجام می‌شود.',
-    'نرخ فروش موزون کل از تقسیم جمع مبلغ فروشِ تبدیل‌شده به ریال بر جمع مقدار فروش محاسبه می‌شود و میانگین ساده نرخ محصولات نیست.',
-    'اگر واحد محصولات قابل جمع نباشد، مقدار تولید/فروش کل خالی است؛ مبلغ فروش و شاخص‌های معتبر محصول غالب همچنان نمایش داده می‌شوند.',
+    'محصولات بر اساس مبلغ فروش مرتب می‌شوند و کمترین تعداد محصولی که سهم تجمعی آن‌ها از ۵۰٪ بیشتر شود، سبد غالب دوره را می‌سازد؛ اگر فقط یک محصول وجود داشته باشد همان محصول انتخاب می‌شود.',
+    'نرخ فروش سبد غالب از تقسیم مبلغ فروشِ تبدیل‌شده به ریال بر مقدار فروش همان سبد محاسبه می‌شود و میانگین ساده نرخ محصولات نیست.',
+    'اگر واحد محصولات منتخب قابل جمع نباشد، مقدار تولید، مقدار فروش و نرخ سبد خالی می‌ماند؛ مبلغ فروش سبد همچنان نمایش داده می‌شود.',
     'برای ردیابی هر عدد، یادداشت سلول و شیت «ممیزی منابع» را بررسی کنید. گزارش اصلاحی باید بر نسخه اولیه اولویت داشته باشد.',
   ];
   notes.forEach((note, index) => {
@@ -1199,7 +1190,7 @@ export function createReportWorkbook({ industryGroups = [], metadata = {} } = {}
   workbook.modified = new Date();
   workbook.subject = 'گزارش تحلیلی فعالیت ماهانه شرکت‌های تولیدی';
   workbook.title = textValue(metadata?.title, 'گزارش ماهانه شرکت‌های تولیدی');
-  workbook.description = 'گزارش ماهانه کدال با شش شاخص و سه مقایسه رشد';
+  workbook.description = 'گزارش ماهانه کدال با چهار شاخص سبد غالب و سه مقایسه رشد';
   workbook.keywords = 'کدال, گزارش ماهانه, تولید, فروش, نرخ فروش, شرکت بورسی';
   workbook.calcProperties.fullCalcOnLoad = true;
   workbook.calcProperties.forceFullCalc = true;
