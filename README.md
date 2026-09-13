@@ -95,8 +95,12 @@ Start the local website:
 npm run web
 ```
 
-Then open [http://127.0.0.1:4173](http://127.0.0.1:4173). On a new installation,
-use **Update all** once to populate the database. The page thereafter reads the
+The server listens on all local network interfaces by default. Open
+[http://127.0.0.1:4173](http://127.0.0.1:4173) on the host computer, or use the
+host's LAN address (for example `http://192.168.100.189:4173`) from another
+device on the same network. Set `HOST` and `PORT` environment variables when a
+specific bind address or port is required. On a new installation, use
+**Update all** once to populate the database. The page thereafter reads the
 latest stored data from `data/monthly-reports.sqlite`; it does not fetch from
 Codal during normal page loads.
 
@@ -105,6 +109,11 @@ control both **Update selected** and **Excel export**. **Update all** refreshes
 the complete active manufacturing-company catalog returned by Codal on that
 run, including issuers not yet in SQLite, while **Update selected** changes only
 the chosen database records.
+The first sidebar option displays every stored symbol across all industries.
+Dashboard controls can sort companies by any of the four target-month metrics
+in ascending or descending order. The unified-table toggle replaces expandable
+company cards with one comparison table where every company occupies four
+consecutive metric rows.
 Progress is shown while the full run is active, and each finished company is
 saved immediately so a later failure cannot discard earlier results.
 Updates are incremental: Codal's current manufacturing-company catalog is

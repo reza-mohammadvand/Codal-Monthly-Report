@@ -451,6 +451,13 @@ async function checkForNewMonthlyReport({ company, client, existingCompany, asOf
   };
 }
 
+function hasReusableCalculatedData(existingCompany) {
+  return existingCompany?.periods?.target?.metrics
+    && existingCompany?.periods?.currentYtd?.metrics
+    && existingCompany?.growth?.targetYoY
+    && existingCompany?.growth?.targetMoM;
+}
+
 async function processCompany({
   company,
   client,
@@ -701,7 +708,8 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
       let quickCheck = null;
       const canUseIdentityOnlyCheck = existingCompany
         && !forceCompanyReparse
-        && existingCompany.calculationVersion === CALCULATION_VERSION;
+        && existingCompany.calculationVersion === CALCULATION_VERSION
+        && hasReusableCalculatedData(existingCompany);
       if (canUseIdentityOnlyCheck) {
         quickCheck = await checkForNewMonthlyReport({ company, client, existingCompany, asOf });
       }

@@ -19,8 +19,8 @@
     <meta name="twitter:image" content="/og.png">
     <link rel="icon" type="image/png" href="/og.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
-    <link rel="stylesheet" href="/styles.css?v=5">
-    <script src="/app.js?v=17" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=6">
+    <script src="/app.js?v=21" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
@@ -156,17 +156,69 @@
                 <span id="activeIndustryCompanyCount" class="subtle-badge">۰ شرکت</span>
               </div>
             </div>
-            <label class="search-field" for="companySearch">
-              <span aria-hidden="true">⌕</span>
-              <span class="sr-only">جست‌وجوی نماد یا نام شرکت</span>
-              <input
-                id="companySearch"
-                type="search"
-                inputmode="search"
-                placeholder="جست‌وجو در تمام نمادها و شرکت‌ها"
-                autocomplete="off"
-              >
-            </label>
+            <div class="toolbar-controls">
+                            <label class="search-field" for="companySearch">
+                <span aria-hidden="true">⌕</span>
+                <span class="sr-only">جست‌وجوی نماد یا نام شرکت</span>
+                <input
+                  id="companySearch"
+                  type="search"
+                  inputmode="search"
+                  placeholder="جست‌وجو"
+                  autocomplete="off"
+                >
+              </label>
+              <details id="metricVisibilityMenu" class="metric-visibility">
+                <summary>
+                  <span>ردیف‌ها</span>
+                  <strong id="metricVisibilitySummary">هر ۴ ردیف</strong>
+                  <span class="metric-visibility-chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="metric-visibility-options" role="group" aria-label="ردیف‌های قابل نمایش">
+                  <label>
+                    <input type="checkbox" data-metric-visibility="dominantProduction" checked>
+                    <span>مقدار تولید</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" data-metric-visibility="dominantSales" checked>
+                    <span>مقدار فروش</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" data-metric-visibility="dominantRevenue" checked>
+                    <span>مبلغ فروش</span>
+                  </label>
+                  <label>
+                    <input type="checkbox" data-metric-visibility="dominantRate" checked>
+                    <span>نرخ فروش</span>
+                  </label>
+                </div>
+              </details>
+              <label class="select-control" for="sortMetric">
+                <select id="sortMetric">
+                  <option value="dominantProduction">مقدار تولید</option>
+                  <option value="dominantSales">مقدار فروش</option>
+                  <option value="dominantRevenue" selected>مبلغ فروش</option>
+                  <option value="dominantRate">نرخ فروش</option>
+                </select>
+              </label>
+              <div class="sort-direction-control" role="group" aria-label="جهت مرتب‌سازی">
+                <div class="sort-direction-buttons">
+                  <button id="sortAscendingButton" type="button" aria-pressed="false">
+                    <span aria-hidden="true">↑</span>
+                    صعودی
+                  </button>
+                  <button id="sortDescendingButton" type="button" aria-pressed="false">
+                    <span aria-hidden="true">↓</span>
+                    نزولی
+                  </button>
+                </div>
+              </div>
+              <label class="table-view-control" for="tableViewToggle">
+                <input id="tableViewToggle" type="checkbox">
+                <span>نمایش یکپارچه جدولی</span>
+              </label>
+
+            </div>
           </section>
 
           <section id="dashboardContent" class="dashboard-content" aria-live="polite">

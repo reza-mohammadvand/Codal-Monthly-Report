@@ -140,7 +140,7 @@ const METRICS = Object.freeze([
   },
 ]);
 
-const GROWTH_NUMBER_FORMAT = '0.0%;[Red](0.0%);-';
+const GROWTH_NUMBER_FORMAT = '0%;[Red](0%);-';
 const DEFAULT_SOURCE_URL = 'https://codal.ir/';
 
 function firstDefined(object, keys) {

@@ -25,12 +25,18 @@ const JALALI_MONTHS = Object.freeze([
   "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
 ]);
 
+const ALL_INDUSTRIES_KEY = "__all__";
+
 const state = {
   dashboard: null,
   activeIndustryId: null,
   selectedSymbols: new Set(),
   expandedSymbols: new Set(),
   searchQuery: "",
+  sortMetric: "dominantRevenue",
+  sortDirection: null,
+  visibleMetricKeys: new Set(METRICS.map((metric) => metric.key)),
+  tableView: false,
   busyAction: null,
   pendingUpdateScope: null,
   toastTimer: null,
@@ -53,6 +59,12 @@ const elements = {
   activeIndustryTitle: document.querySelector("#activeIndustryTitle"),
   activeIndustryCompanyCount: document.querySelector("#activeIndustryCompanyCount"),
   companySearch: document.querySelector("#companySearch"),
+  metricVisibilityMenu: document.querySelector("#metricVisibilityMenu"),
+  metricVisibilitySummary: document.querySelector("#metricVisibilitySummary"),
+  sortMetric: document.querySelector("#sortMetric"),
+  sortAscendingButton: document.querySelector("#sortAscendingButton"),
+  sortDescendingButton: document.querySelector("#sortDescendingButton"),
+  tableViewToggle: document.querySelector("#tableViewToggle"),
   dashboardContent: document.querySelector("#dashboardContent"),
   dashboardActionsForm: document.querySelector("#dashboardActionsForm"),
   incompleteButton: document.querySelector("#incompleteButton"),
@@ -102,11 +114,11 @@ const faYear = new Intl.NumberFormat("fa-IR", {
   useGrouping: false,
   maximumFractionDigits: 0,
 });
-const faDecimal = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 2 });
+const faDecimal = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const faPercent = new Intl.NumberFormat("fa-IR", {
   style: "percent",
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
 });
 const faDateTime = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
   dateStyle: "medium",
@@ -182,9 +194,14 @@ function companySymbol(company) {
   return String(company?.symbol ?? "").trim();
 }
 
+function allCompanies() {
+  return getIndustries().flatMap((industry) => (
+    Array.isArray(industry.companies) ? industry.companies : []
+  ));
+}
+
 function allSymbols() {
-  return getIndustries()
-    .flatMap((industry) => Array.isArray(industry.companies) ? industry.companies : [])
+  return allCompanies()
     .map(companySymbol)
     .filter(Boolean);
 }
@@ -258,7 +275,7 @@ function ingestDashboard(payload, { preserveSelection = false } = {}) {
 
   const activeStillExists = getIndustries().some(
     (industry, index) => industryKey(industry, index) === state.activeIndustryId,
-  );
+  ) || state.activeIndustryId === ALL_INDUSTRIES_KEY;
   if (!activeStillExists) {
     state.activeIndustryId = getIndustries().length ? industryKey(getIndustries()[0], 0) : null;
   }
@@ -367,7 +384,32 @@ function renderIndustryList() {
     return;
   }
 
-  elements.industryList.innerHTML = industries.map((industry, index) => {
+  const marketSymbols = allSymbols();
+  const marketSelectedCount = marketSymbols.filter((symbol) => state.selectedSymbols.has(symbol)).length;
+  const allMarketSelected = marketSymbols.length > 0 && marketSelectedCount === marketSymbols.length;
+  const allIndustriesMarkup = `
+    <div class="industry-item industry-item-all${state.activeIndustryId === ALL_INDUSTRIES_KEY ? " active" : ""}" role="listitem" data-industry-row="${ALL_INDUSTRIES_KEY}">
+      <label class="industry-check">
+        <span class="sr-only">انتخاب همه نمادهای بازار</span>
+        <input
+          type="checkbox"
+          data-industry-checkbox="${ALL_INDUSTRIES_KEY}"
+          ${allMarketSelected ? "checked" : ""}
+        >
+      </label>
+      <button
+        class="industry-button"
+        type="button"
+        data-industry-button="${ALL_INDUSTRIES_KEY}"
+        aria-current="${state.activeIndustryId === ALL_INDUSTRIES_KEY ? "true" : "false"}"
+      >
+        <span class="industry-name">همه نمادها</span>
+        <span class="industry-total">${faInteger.format(marketSymbols.length)}</span>
+      </button>
+    </div>
+  `;
+
+  const industryMarkup = industries.map((industry, index) => {
     const key = industryKey(industry, index);
     const companies = Array.isArray(industry.companies) ? industry.companies : [];
     const symbols = companies.map(companySymbol).filter(Boolean);
@@ -398,6 +440,12 @@ function renderIndustryList() {
       </div>
     `;
   }).join("");
+  elements.industryList.innerHTML = allIndustriesMarkup + industryMarkup;
+
+  const allCheckbox = elements.industryList.querySelector(`[data-industry-checkbox="${ALL_INDUSTRIES_KEY}"]`);
+  if (allCheckbox) {
+    allCheckbox.indeterminate = marketSelectedCount > 0 && marketSelectedCount < marketSymbols.length;
+  }
 
   industries.forEach((industry, index) => {
     const key = industryKey(industry, index);
@@ -411,8 +459,9 @@ function renderIndustryList() {
 
 function renderActiveIndustry() {
   const industry = activeIndustry();
+  const showingAll = state.activeIndustryId === ALL_INDUSTRIES_KEY;
   const query = normalizeText(state.searchQuery);
-  if (!industry && !query) {
+  if (!industry && !showingAll && !query) {
     elements.activeIndustryTitle.textContent = "بدون صنعت";
     elements.activeIndustryCompanyCount.textContent = "۰ شرکت";
     elements.dashboardContent.innerHTML = `
@@ -424,19 +473,20 @@ function renderActiveIndustry() {
     return;
   }
 
-  const industryCompanies = Array.isArray(industry?.companies) ? industry.companies : [];
-  const searchableCompanies = query
-    ? getIndustries().flatMap((item) => item.companies ?? [])
-    : industryCompanies;
-  const visibleCompanies = query
+  const industryCompanies = showingAll
+    ? allCompanies()
+    : Array.isArray(industry?.companies) ? industry.companies : [];
+  const searchableCompanies = query ? allCompanies() : industryCompanies;
+  const filteredCompanies = query
     ? searchableCompanies.filter((company) => (
         normalizeText(`${company.symbol} ${company.name}`).includes(query)
       ))
     : industryCompanies;
+  const visibleCompanies = sortCompanies(filteredCompanies);
 
   elements.activeIndustryTitle.textContent = query
     ? "نتایج جست‌وجو در همه صنایع"
-    : industry?.industryName || "صنعت بدون نام";
+    : showingAll ? "همه نمادها" : industry?.industryName || "صنعت بدون نام";
   elements.activeIndustryCompanyCount.textContent = query
     ? `${faInteger.format(visibleCompanies.length)} نتیجه`
     : `${faInteger.format(industryCompanies.length)} شرکت`;
@@ -451,7 +501,27 @@ function renderActiveIndustry() {
     return;
   }
 
-  elements.dashboardContent.innerHTML = visibleCompanies.map(renderCompanyCard).join("");
+  elements.dashboardContent.innerHTML = state.tableView
+    ? renderUnifiedTable(visibleCompanies)
+    : visibleCompanies.map(renderCompanyCard).join("");
+}
+
+function sortCompanies(companies) {
+  if (!state.sortDirection) return [...companies];
+  const direction = state.sortDirection === "asc" ? 1 : -1;
+  return [...companies].sort((left, right) => {
+    const leftValue = finiteNumber(left.periods?.target?.metrics?.[state.sortMetric]);
+    const rightValue = finiteNumber(right.periods?.target?.metrics?.[state.sortMetric]);
+    if (leftValue === null && rightValue === null) {
+      return companySymbol(left).localeCompare(companySymbol(right), "fa");
+    }
+    if (leftValue === null) return 1;
+    if (rightValue === null) return -1;
+    if (leftValue === rightValue) {
+      return companySymbol(left).localeCompare(companySymbol(right), "fa");
+    }
+    return (leftValue - rightValue) * direction;
+  });
 }
 
 function definitionLabel(company, column, isGrowth = false) {
@@ -519,6 +589,77 @@ function companyMetricUnit(company, metric) {
   return target?.dominantProductUnit || metric.unit;
 }
 
+function visibleMetrics() {
+  return METRICS.filter((metric) => state.visibleMetricKeys.has(metric.key));
+}
+
+function renderUnifiedTable(companies) {
+  const displayedMetrics = visibleMetrics();
+  const sample = companies[0];
+  const headers = [
+    ...PERIOD_COLUMNS.map((column) => definitionLabel(sample, column)),
+    ...GROWTH_COLUMNS.map((column) => definitionLabel(sample, column, true)),
+  ];
+  const body = companies.map((company) => {
+    const symbol = companySymbol(company);
+    const selected = state.selectedSymbols.has(symbol);
+    const status = companyStatusLabel(company);
+    const tone = statusTone(status);
+    const dominantProduct = company.periods?.target?.dominantProductName ?? null;
+    return displayedMetrics.map((metric, metricIndex) => {
+      const periodCells = PERIOD_COLUMNS.map((column) => (
+        metricCell(company.periods?.[column.key]?.metrics?.[metric.key])
+      ));
+      const growthCells = GROWTH_COLUMNS.map((column, index) => metricCell(
+        company.growth?.[column.key]?.[metric.key],
+        { isGrowth: true, growthStart: index === 0 },
+      ));
+      return `
+        <tr class="unified-company-row${selected ? " selected" : ""}${metricIndex === 0 ? " group-start" : ""}" data-table-symbol="${escapeHtml(symbol)}">
+          ${metricIndex === 0 ? `
+            <th class="unified-company-column" scope="rowgroup" rowspan="${displayedMetrics.length}">
+              <div class="unified-company-identity">
+                <label class="company-check">
+                  <span class="sr-only">انتخاب نماد ${escapeHtml(symbol)}</span>
+                  <input type="checkbox" data-company-checkbox="${escapeHtml(symbol)}" ${selected ? "checked" : ""}>
+                </label>
+                <span>
+                  <strong>${escapeHtml(symbol || "—")}</strong>
+                  <small title="${escapeHtml(company.name || "")}">${escapeHtml(company.name || "نام شرکت ثبت نشده")}</small>
+                </span>
+                <span class="badge status-${tone}">${escapeHtml(status)}</span>
+                ${dominantProduct ? `<small class="unified-dominant">سبد غالب: ${escapeHtml(dominantProduct)}</small>` : ""}
+              </div>
+            </th>
+          ` : ""}
+          <th class="metric-column unified-metric-column" scope="row">
+            <span class="metric-label">${escapeHtml(metric.label)}</span>
+            <span class="metric-unit">${escapeHtml(companyMetricUnit(company, metric))}</span>
+          </th>
+          ${periodCells.join("")}
+          ${growthCells.join("")}
+        </tr>
+      `;
+    }).join("");
+  }).join("");
+
+  return `
+    <div class="table-scroll unified-table-scroll" tabindex="0" role="region" aria-label="جدول یکپارچه شرکت‌ها">
+      <table class="metrics-table unified-table">
+        <caption class="sr-only">مقایسه یکپارچه ${faInteger.format(companies.length)} نماد</caption>
+        <thead>
+          <tr>
+            <th class="unified-company-column" scope="col">نماد و شرکت</th>
+            <th class="metric-column unified-metric-column" scope="col">شاخص</th>
+            ${headers.map((label, index) => `<th scope="col" class="${index === PERIOD_COLUMNS.length ? "growth-start" : ""}">${escapeHtml(label)}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderCompanyCard(company) {
   const symbol = companySymbol(company);
   const name = company.name || "نام شرکت ثبت نشده";
@@ -538,7 +679,7 @@ function renderCompanyCard(company) {
     ...GROWTH_COLUMNS.map((column) => definitionLabel(company, column, true)),
   ];
 
-  const rows = METRICS.map((metric) => {
+  const rows = visibleMetrics().map((metric) => {
     const periodCells = PERIOD_COLUMNS.map((column) => {
       const period = company.periods?.[column.key];
       return metricCell(period?.metrics?.[metric.key]);
@@ -671,9 +812,11 @@ function syncNativeActionForm() {
 }
 
 function toggleIndustry(key, checked) {
-  const industry = getIndustries().find((item, index) => industryKey(item, index) === key);
-  if (!industry) return;
-  for (const company of industry.companies ?? []) {
+  const companies = key === ALL_INDUSTRIES_KEY
+    ? allCompanies()
+    : getIndustries().find((item, index) => industryKey(item, index) === key)?.companies;
+  if (!companies) return;
+  for (const company of companies) {
     const symbol = companySymbol(company);
     if (!symbol) continue;
     if (checked) state.selectedSymbols.add(symbol);
@@ -688,6 +831,11 @@ function toggleCompany(symbol, checked) {
   if (checked) state.selectedSymbols.add(symbol);
   else state.selectedSymbols.delete(symbol);
   renderIndustryList();
+  if (state.tableView) {
+    renderActiveIndustry();
+    renderSelectionState();
+    return;
+  }
   const card = [...elements.dashboardContent.querySelectorAll("[data-company-symbol]")]
     .find((element) => element.dataset.companySymbol === symbol);
   if (card) {
@@ -932,6 +1080,54 @@ elements.companySearch.addEventListener("input", () => {
   renderActiveIndustry();
 });
 
+function renderMetricVisibilityState() {
+  const count = state.visibleMetricKeys.size;
+  elements.metricVisibilitySummary.textContent = count === METRICS.length
+    ? "هر ۴ ردیف"
+    : `${faInteger.format(count)} ردیف`;
+  elements.metricVisibilityMenu.querySelectorAll("[data-metric-visibility]").forEach((checkbox) => {
+    checkbox.checked = state.visibleMetricKeys.has(checkbox.dataset.metricVisibility);
+  });
+}
+
+elements.metricVisibilityMenu.addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-metric-visibility]");
+  if (!checkbox) return;
+  const metricKey = checkbox.dataset.metricVisibility;
+  if (checkbox.checked) {
+    state.visibleMetricKeys.add(metricKey);
+  } else if (state.visibleMetricKeys.size > 1) {
+    state.visibleMetricKeys.delete(metricKey);
+  } else {
+    checkbox.checked = true;
+    showToast("حداقل یک ردیف باید نمایش داده شود.", "warning");
+  }
+  renderMetricVisibilityState();
+  renderActiveIndustry();
+});
+
+elements.sortMetric.addEventListener("change", () => {
+  state.sortMetric = elements.sortMetric.value;
+  renderActiveIndustry();
+});
+
+function toggleSortDirection(direction) {
+  state.sortDirection = state.sortDirection === direction ? null : direction;
+  elements.sortAscendingButton.classList.toggle("active", state.sortDirection === "asc");
+  elements.sortDescendingButton.classList.toggle("active", state.sortDirection === "desc");
+  elements.sortAscendingButton.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
+  elements.sortDescendingButton.setAttribute("aria-pressed", String(state.sortDirection === "desc"));
+  renderActiveIndustry();
+}
+
+elements.sortAscendingButton.addEventListener("click", () => toggleSortDirection("asc"));
+elements.sortDescendingButton.addEventListener("click", () => toggleSortDirection("desc"));
+
+elements.tableViewToggle.addEventListener("change", () => {
+  state.tableView = elements.tableViewToggle.checked;
+  renderActiveIndustry();
+});
+
 elements.clearSelectionButton.addEventListener("click", () => {
   state.selectedSymbols.clear();
   renderIndustryList();
@@ -957,4 +1153,5 @@ elements.updateDialog.addEventListener("close", () => {
   state.pendingUpdateScope = null;
 });
 
+renderMetricVisibilityState();
 loadDashboard();

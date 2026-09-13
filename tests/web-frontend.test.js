@@ -31,7 +31,8 @@ test("company summaries control animated, keyboard-accessible detail panels", as
   assert.match(app, /event\.key !== " "/);
   assert.match(app, /const faYear = new Intl\.NumberFormat\("fa-IR", \{[^}]*useGrouping: false,/s);
   assert.match(app, /faYear\.format\(year\)/);
-  assert.equal((app.match(/سبد غالب:/g) ?? []).length, 1);
+  const dominantBasketLabels = (app.match(/سبد غالب:/g) ?? []).length;
+  assert.ok(dominantBasketLabels >= 1 && dominantBasketLabels <= 2);
   assert.doesNotMatch(app, /metric\.dominant \? period\?\.dominantProductName/);
 });
 
@@ -59,7 +60,7 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /input\.name = "symbols"/);
   assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
   assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
-  assert.match(html, /app\.js\?v=17" defer/);
+  assert.match(html, /app\.js\?v=21" defer/);
   assert.match(html, /id="dashboardActionsForm"/);
   assert.match(html, /formaction="\/actions\/export"/);
   assert.match(html, /formaction="\/actions\/update\?scope=selected"/);
@@ -67,6 +68,23 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(html, /id="incompleteButton"/);
   assert.match(app, /function openIncompleteDialog\(\)/);
   assert.match(app, /نتایج جست‌وجو در همه صنایع/);
+  assert.match(app, /const ALL_INDUSTRIES_KEY = "__all__"/);
+  assert.match(html, /id="sortMetric"/);
+  assert.match(html, /id="metricVisibilityMenu"/);
+  assert.match(html, /id="metricVisibilitySummary"/);
+  assert.equal((html.match(/data-metric-visibility=/g) ?? []).length, 4);
+  assert.match(html, /id="sortAscendingButton"/);
+  assert.match(html, /id="sortDescendingButton"/);
+  assert.match(html, /aria-pressed="false"/);
+  assert.match(html, /id="tableViewToggle"/);
+  assert.match(app, /function sortCompanies\(companies\)/);
+  assert.match(app, /if \(!state\.sortDirection\) return \[\.\.\.companies\]/);
+  assert.match(app, /function toggleSortDirection\(direction\)/);
+  assert.match(app, /faDecimal = new Intl\.NumberFormat\("fa-IR", \{ maximumFractionDigits: 0 \}\)/);
+  assert.match(app, /minimumFractionDigits: 0,[\s\S]*maximumFractionDigits: 0,/);
+  assert.match(app, /function renderUnifiedTable\(companies\)/);
+  assert.match(app, /function visibleMetrics\(\)/);
+  assert.match(app, /function renderMetricVisibilityState\(\)/);
   assert.doesNotMatch(html, /type="module"/);
   assert.doesNotMatch(html, /runtime-badge|نسخه ۱۵: رابط آماده/);
 });

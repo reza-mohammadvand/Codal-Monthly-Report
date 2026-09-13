@@ -213,7 +213,7 @@ function numberFromEnvironment(value, fallback) {
 }
 
 export async function startWebServer(options = {}) {
-  const host = options.host ?? process.env.HOST ?? "127.0.0.1";
+  const host = options.host ?? process.env.HOST ?? "0.0.0.0";
   const port = numberFromEnvironment(options.port ?? process.env.PORT, 4173);
   const database = options.database ?? new ReportDatabase(
     options.databasePath ?? process.env.CODAL_DB_PATH ?? path.resolve("data/monthly-reports.sqlite"),
@@ -242,7 +242,9 @@ export async function startWebServer(options = {}) {
 
 async function runMain() {
   const running = await startWebServer();
-  console.log(`Codal dashboard is running at http://${running.host}:${running.port}`);
+  console.log(`Codal dashboard is listening on ${running.host}:${running.port}`);
+  console.log(`Local access: http://127.0.0.1:${running.port}`);
+  console.log(`Network access: http://192.168.100.189:${running.port}`);
   console.log("Data is read from SQLite. Use the update buttons to fetch fresh Codal reports.");
 
   let closing = false;

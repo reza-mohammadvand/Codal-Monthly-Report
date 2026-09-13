@@ -112,6 +112,7 @@ test('Excel report serializes with a compact layout and auditable growth formula
   assert.equal(sheet.getCell('F5').numFmt, '#,##0;[Red](#,##0);-');
   assert.equal(sheet.getCell('F6').numFmt, '#,##0;[Red](#,##0);-');
   assert.equal(sheet.getCell('F7').numFmt, '#,##0;[Red](#,##0);-');
+  assert.equal(sheet.getCell('L5').numFmt, '0%;[Red](0%);-');
   assert.deepEqual(excelReportSchema.growth[2], {
     key: 'targetMoM',
     aliases: ['targetMoM', 'monthOverMonth'],
