@@ -13,9 +13,9 @@ by industry, and creates a four-row dominant-basket block for every symbol.
 - Runs a focused four-symbol pilot (`فولاد`, `فملی`, `شپنا`, and `کگل`) by default.
 - Includes a dark, right-to-left web dashboard backed by a persistent SQLite
   database, with industry and symbol selection controls.
-- Performs a full extraction when the database is empty. Web updates currently
-  force a fresh download and reprocessing of every required monthly report so
-  all stored companies migrate to the new dominant-basket calculation.
+- Performs a full extraction when the database is empty. Later web-wide updates
+  scan one user-defined recent publication window and process only matching
+  manufacturing symbols.
 - Processes companies sequentially and pauses for 10 seconds after each company
   by default to respect Codal's rate limits.
 - Checkpoints each completed or changed company in SQLite immediately.
@@ -105,28 +105,30 @@ latest stored data from `data/monthly-reports.sqlite`; it does not fetch from
 Codal during normal page loads.
 
 The right sidebar groups companies by industry. Industry and company checkboxes
-control both **Update selected** and **Excel export**. **Update all** refreshes
-the complete active manufacturing-company catalog returned by Codal on that
-run, including issuers not yet in SQLite, while **Update selected** changes only
-the chosen database records.
+control both **Update selected** and **Excel export**. For a database that already
+contains data, enter a lookback period (1–365 days) and use **Update recent
+reports**. The application makes one paginated Codal search for monthly filings
+published in that window, intersects the results with Codal's current active
+manufacturing-company catalog, and processes only those symbols. A newly listed
+manufacturing issuer is therefore added when it has a monthly filing inside the
+selected window. **Update selected** continues to check only the chosen symbols.
 The first sidebar option displays every stored symbol across all industries.
-Dashboard controls can sort companies by any of the four target-month metrics
-in ascending or descending order. The unified-table toggle replaces expandable
+Dashboard controls can sort companies by any of the four metrics and any of the
+three growth columns, in ascending or descending order. The unified-table toggle replaces expandable
 company cards with one comparison table where every company occupies four
 consecutive metric rows.
 Progress is shown while the full run is active, and each finished company is
 saved immediately so a later failure cannot discard earlier results.
-Updates are incremental: Codal's current manufacturing-company catalog is
-refreshed on **Update all**, newly listed issuers are added, and existing
-companies download and replace data only when a new filing or correction is
-available. **Update selected** applies the same new-filing check to the chosen
-symbols. Companies shown in the incomplete-data list are fully downloaded and
-reprocessed on either update scope even when their latest tracing number has
-not changed, so recoverable parsing gaps can be filled. A technical failure
-never replaces an already valid stored report.
+Updates are incremental. The recent-window scan compares tracing numbers from
+its global result with stored tracing numbers, so an already processed filing
+does not trigger another report download. New filings and corrections for
+manufacturing symbols are extracted and persisted; non-manufacturing results
+are ignored. **Update selected** applies the per-symbol new-filing check to the
+chosen symbols. A technical failure never replaces an already valid stored
+report.
 
-The normal daily path is identifier-only: one small Codal search checks report
-tracing numbers from the latest stored report onward. When every returned ID is
+The normal daily all-company path is identifier-first: one global, date-bounded
+Codal search discovers candidate tracing numbers. When every returned ID is
 already stored, the company is skipped before fiscal-calendar resolution,
 report-page downloads, calculations, or database writes. The 10-second
 between-company pause applies only after a company is actually downloaded or

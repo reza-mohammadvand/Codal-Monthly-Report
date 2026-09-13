@@ -83,6 +83,33 @@ function formatAsOf(value) {
   return `${value.year}/${String(value.month).padStart(2, "0")}/${String(value.day).padStart(2, "0")}`;
 }
 
+function jalaliDateFromGregorian(value) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US-u-ca-persian", {
+      timeZone: "Asia/Tehran",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    }).formatToParts(value).map((part) => [part.type, part.value]),
+  );
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
+function recentScanRange(days, now = new Date()) {
+  const lookbackDays = Number(days);
+  if (!Number.isInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365) {
+    throw new RangeError("recentDays must be an integer between 1 and 365.");
+  }
+  const end = new Date(now);
+  const start = new Date(end);
+  start.setDate(start.getDate() - lookbackDays);
+  return {
+    days: lookbackDays,
+    fromDate: formatAsOf(jalaliDateFromGregorian(start)),
+    toDate: formatAsOf(jalaliDateFromGregorian(end)),
+  };
+}
+
 function resolveLogger(logger) {
   if (logger === null) return () => {};
   if (typeof logger === "function") return logger;
@@ -423,6 +450,25 @@ function reportIdentity(report) {
   return value == null ? null : String(value);
 }
 
+function reportSymbol(report) {
+  return String(report?.Symbol ?? report?.symbol ?? "").trim();
+}
+
+function checkPreloadedReportsForNewIdentity(existingCompany, reports) {
+  const storedIdentities = new Set(
+    (Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
+      .map(reportIdentity)
+      .filter(Boolean),
+  );
+  return {
+    hasNewReport: reports.some((report) => {
+      const identity = reportIdentity(report);
+      return !identity || !storedIdentities.has(identity);
+    }),
+    reports,
+  };
+}
+
 function latestStoredReportMonth(existingCompany) {
   return (Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
     .filter((report) => Number.isInteger(Number(report?.year)) && Number.isInteger(Number(report?.month)))
@@ -433,22 +479,13 @@ function latestStoredReportMonth(existingCompany) {
 async function checkForNewMonthlyReport({ company, client, existingCompany, asOf }) {
   const latestStored = latestStoredReportMonth(existingCompany);
   if (!latestStored) return { hasNewReport: true, reports: null };
-  const storedIdentities = new Set(
-    existingCompany.monthlyReports.map(reportIdentity).filter(Boolean),
-  );
   const reports = await client.searchMonthlyReports({
     symbol: company.symbol,
     fromDate: `${Number(latestStored.year)}/${String(Number(latestStored.month)).padStart(2, "0")}/01`,
     toDate: formatAsOf(asOf),
     allPages: false,
   });
-  return {
-    hasNewReport: reports.some((report) => {
-      const identity = reportIdentity(report);
-      return !identity || !storedIdentities.has(identity);
-    }),
-    reports,
-  };
+  return checkPreloadedReportsForNewIdentity(existingCompany, reports);
 }
 
 function hasReusableCalculatedData(existingCompany) {
@@ -504,7 +541,9 @@ async function processCompany({
   const errors = [];
   let downloadedReportCount = 0;
   let newOrChangedReportCount = 0;
-  const foundReportCount = months.filter((month) => reportsByMonth.has(monthKey(month))).length;
+  const foundReportCount = months.filter((month) => (
+    reportsByMonth.has(monthKey(month)) || storedReportsByMonth.has(monthKey(month))
+  )).length;
   const parsedMonths = await Promise.all(months.map(async (month) => {
     const candidates = reportsByMonth.get(monthKey(month)) ?? [];
     const storedReport = storedReportsByMonth.get(monthKey(month)) ?? null;
@@ -631,6 +670,9 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
   const log = resolveLogger(options.logger);
   const asOfLabel = formatAsOf(asOf);
   const targetMonthLabel = monthKey(definitions.targetMonth);
+  const generatedAtValue = typeof dependencies.now === "function"
+    ? dependencies.now()
+    : new Date();
   let client = dependencies.client ?? options.client ?? null;
   if (!client) {
     const cache = new DiskCache(options.cacheDir ?? path.resolve(".cache/codal"), {
@@ -665,8 +707,46 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     client.fetchProductionCompanies(),
     client.fetchIndustries(),
   ]);
-  const companyCatalogCount = selectCompanies(rawCompanies, { allSymbols: true }).length;
-  const companies = selectCompanies(rawCompanies, options);
+  const companyCatalog = selectCompanies(rawCompanies, { allSymbols: true });
+  const companyCatalogCount = companyCatalog.length;
+  let recentReportsBySymbol = null;
+  let recentScan = null;
+  let companies;
+  if (options.recentDays !== null && options.recentDays !== undefined) {
+    recentScan = recentScanRange(options.recentDays, generatedAtValue);
+    log(`Scanning monthly filings published from ${recentScan.fromDate} to ${recentScan.toDate}...`);
+    const recentReports = await client.searchMonthlyReports({
+      fromDate: recentScan.fromDate,
+      toDate: recentScan.toDate,
+      allPages: true,
+    });
+    const catalogBySymbol = new Map(
+      companyCatalog.map((company) => [normalizeCodalText(company.symbol), company]),
+    );
+    recentReportsBySymbol = new Map();
+    for (const report of recentReports) {
+      const normalizedSymbol = normalizeCodalText(reportSymbol(report));
+      if (!normalizedSymbol || !catalogBySymbol.has(normalizedSymbol)) continue;
+      if (!recentReportsBySymbol.has(normalizedSymbol)) {
+        recentReportsBySymbol.set(normalizedSymbol, []);
+      }
+      recentReportsBySymbol.get(normalizedSymbol).push(report);
+    }
+    companies = companyCatalog.filter((company) => (
+      recentReportsBySymbol.has(normalizeCodalText(company.symbol))
+    ));
+    recentScan = {
+      ...recentScan,
+      reportCount: recentReports.length,
+      matchedCompanyCount: companies.length,
+    };
+    await emitProgress(options.onProgress, {
+      type: "recent-scan-complete",
+      ...recentScan,
+    });
+  } else {
+    companies = selectCompanies(rawCompanies, options);
+  }
   const existingBySymbol = new Map(
     (Array.isArray(options.existingCompanies) ? options.existingCompanies : [])
       .map((company) => [normalizeCodalText(company?.symbol), company]),
@@ -682,9 +762,6 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     companyCount: companies.length,
   });
   log(`Selected companies: ${companies.length} | Fiscal report windows are resolved per company.`);
-  const generatedAtValue = typeof dependencies.now === "function"
-    ? dependencies.now()
-    : new Date();
   const metadata = {
     asOf: asOfLabel,
     executionMonth: definitions.executionMonth,
@@ -694,6 +771,7 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     calculationVersion: CALCULATION_VERSION,
     forceFullRefresh: options.forceReparseReports === true,
     companyCatalogCount,
+    recentScan,
     sourceUrl: "https://www.codal.ir/",
     generatedAt: new Date(generatedAtValue).toISOString(),
   };
@@ -704,6 +782,9 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     const existingCompany = existingBySymbol.get(normalizeCodalText(company.symbol)) ?? null;
     const forceCompanyReparse = options.forceReparseReports === true
       || forceReparseSymbolSet.has(normalizeCodalText(company.symbol));
+    const globallyDiscoveredReports = recentReportsBySymbol?.get(
+      normalizeCodalText(company.symbol),
+    ) ?? null;
     try {
       let quickCheck = null;
       const canUseIdentityOnlyCheck = existingCompany
@@ -711,7 +792,9 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
         && existingCompany.calculationVersion === CALCULATION_VERSION
         && hasReusableCalculatedData(existingCompany);
       if (canUseIdentityOnlyCheck) {
-        quickCheck = await checkForNewMonthlyReport({ company, client, existingCompany, asOf });
+        quickCheck = globallyDiscoveredReports
+          ? checkPreloadedReportsForNewIdentity(existingCompany, globallyDiscoveredReports)
+          : await checkForNewMonthlyReport({ company, client, existingCompany, asOf });
       }
       if (quickCheck && !quickCheck.hasNewReport) {
         result = {
@@ -727,7 +810,8 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
           executionMonth: definitions.executionMonth,
           asOf,
           existingCompany,
-          preloadedReports: quickCheck?.reports ?? null,
+          preloadedReports: quickCheck?.reports
+            ?? (existingCompany ? globallyDiscoveredReports : null),
         });
         result = context.noReports
         ? existingCompany

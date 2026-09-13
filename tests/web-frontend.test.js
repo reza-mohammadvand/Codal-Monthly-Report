@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import vm from "node:vm";
 
 const CSS_FILE = new URL("../src/web/public/styles.css", import.meta.url);
 const APP_FILE = new URL("../src/web/public/app.js", import.meta.url);
 const INDEX_FILE = new URL("../src/web/public/index.html", import.meta.url);
+const SORTING_FILE = new URL("../src/web/public/sorting.js", import.meta.url);
 
 test("dashboard keeps the desktop sidebar on the right with brighter typography", async () => {
   const css = await fs.readFile(CSS_FILE, "utf8");
@@ -60,18 +62,24 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /input\.name = "symbols"/);
   assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
   assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
-  assert.match(html, /app\.js\?v=21" defer/);
+  assert.match(html, /sorting\.js\?v=1" defer/);
+  assert.match(html, /app\.js\?v=24" defer/);
   assert.match(html, /id="dashboardActionsForm"/);
   assert.match(html, /formaction="\/actions\/export"/);
   assert.match(html, /formaction="\/actions\/update\?scope=selected"/);
   assert.match(html, /formaction="\/actions\/update\?scope=all"/);
+  assert.match(html, /id="recentDaysInput"/);
+  assert.match(html, /name="recentDays"/);
+  assert.match(app, /scope === "all" \? \{ recentDays \} : \{\}/);
   assert.match(html, /id="incompleteButton"/);
   assert.match(app, /function openIncompleteDialog\(\)/);
   assert.match(app, /نتایج جست‌وجو در همه صنایع/);
   assert.match(app, /const ALL_INDUSTRIES_KEY = "__all__"/);
   assert.match(html, /id="sortMetric"/);
+  assert.match(html, /id="sortColumn"/);
+  assert.equal((html.match(/<option value="(?:targetYoY|ytdYoY|targetMoM)"/g) ?? []).length, 3);
   assert.match(html, /id="metricVisibilityMenu"/);
-  assert.match(html, /id="metricVisibilitySummary"/);
+  assert.doesNotMatch(html, /metricVisibilitySummary/);
   assert.equal((html.match(/data-metric-visibility=/g) ?? []).length, 4);
   assert.match(html, /id="sortAscendingButton"/);
   assert.match(html, /id="sortDescendingButton"/);
@@ -79,6 +87,10 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(html, /id="tableViewToggle"/);
   assert.match(app, /function sortCompanies\(companies\)/);
   assert.match(app, /if \(!state\.sortDirection\) return \[\.\.\.companies\]/);
+  assert.match(app, /left\.growth\?\.\[state\.sortColumn\]\?\.\[state\.sortMetric\]/);
+  assert.match(app, /CodalDashboardSorting\.compareNullableNumbers/);
+  assert.match(app, /setSortDirection\(null\)/);
+  assert.match(app, /function renderSortColumnOptions\(\)/);
   assert.match(app, /function toggleSortDirection\(direction\)/);
   assert.match(app, /faDecimal = new Intl\.NumberFormat\("fa-IR", \{ maximumFractionDigits: 0 \}\)/);
   assert.match(app, /minimumFractionDigits: 0,[\s\S]*maximumFractionDigits: 0,/);
@@ -87,6 +99,22 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /function renderMetricVisibilityState\(\)/);
   assert.doesNotMatch(html, /type="module"/);
   assert.doesNotMatch(html, /runtime-badge|نسخه ۱۵: رابط آماده/);
+});
+
+test("growth sorting preserves negative, zero, and positive numeric order", async () => {
+  const source = await fs.readFile(SORTING_FILE, "utf8");
+  const sandbox = {};
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(source, sandbox);
+  const compare = sandbox.CodalDashboardSorting.compareNullableNumbers;
+  const values = [0.25, -0.4, null, 0, -0.1, 1.2];
+
+  assert.deepEqual([...values].sort((left, right) => compare(left, right, "asc")), [
+    -0.4, -0.1, 0, 0.25, 1.2, null,
+  ]);
+  assert.deepEqual([...values].sort((left, right) => compare(left, right, "desc")), [
+    1.2, 0.25, 0, -0.1, -0.4, null,
+  ]);
 });
 
 test("every statically queried UI element exists in the dashboard HTML", async () => {

@@ -400,6 +400,54 @@ input[type="checkbox"] {
   scrollbar-width: none;
 }
 
+.recent-days-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 3px 10px 3px 5px;
+  color: var(--muted);
+  background: rgba(13, 27, 45, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.recent-days-control:focus-within {
+  color: var(--text);
+  border-color: rgba(64, 217, 200, 0.38);
+}
+
+.recent-days-control input {
+  width: 54px;
+  height: 34px;
+  padding: 0 6px;
+  color: var(--cyan);
+  background: rgba(5, 18, 30, 0.75);
+  border: 1px solid rgba(82, 125, 166, 0.22);
+  border-radius: 9px;
+  outline: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.recent-days-control input::-webkit-inner-spin-button,
+.recent-days-control input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.recent-days-control input:disabled {
+  opacity: 0.55;
+}
+
 .button {
   justify-content: center;
   gap: 8px;
@@ -753,12 +801,6 @@ input[type="checkbox"] {
   color: var(--text);
   background: var(--surface-solid);
   border-color: rgba(64, 217, 200, 0.34);
-}
-
-.metric-visibility summary strong {
-  color: var(--cyan);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .metric-visibility-chevron {

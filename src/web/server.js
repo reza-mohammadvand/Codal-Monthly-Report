@@ -68,7 +68,10 @@ async function readJsonBody(request) {
 async function readFormBody(request) {
   const body = await readBody(request);
   const params = new URLSearchParams(body.toString("utf8"));
-  return { symbols: params.getAll("symbols").filter(Boolean) };
+  return {
+    symbols: params.getAll("symbols").filter(Boolean),
+    recentDays: params.get("recentDays"),
+  };
 }
 
 function sendExcel(response, exported) {
@@ -187,7 +190,12 @@ export function createWebServer({
       if (request.method === "POST" && pathname === "/actions/update") {
         const body = await readFormBody(request);
         const scope = requestUrl.searchParams.get("scope") === "all" ? "all" : "selected";
-        await service.update({ scope, ...(scope === "selected" ? { symbols: body.symbols } : {}) });
+        await service.update({
+          scope,
+          ...(scope === "selected"
+            ? { symbols: body.symbols }
+            : { recentDays: body.recentDays }),
+        });
         response.statusCode = 303;
         response.setHeader("Location", "/?action=updated");
         response.setHeader("Cache-Control", "no-store");

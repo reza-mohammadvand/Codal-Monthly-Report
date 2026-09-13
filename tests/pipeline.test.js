@@ -460,6 +460,86 @@ test("incremental updates reuse stored monthly data when Codal has no newer fili
   assert.equal(changed.companies[0].monthlyReports.at(-1).source.tracingNo, 99_999);
 });
 
+test("recent scan uses one global Codal search and keeps only manufacturing symbols", async () => {
+  const searches = [];
+  let parseCalls = 0;
+  const existingCompany = {
+    symbol: "TEST",
+    name: "Test company",
+    industryId: 27,
+    status: "کامل",
+    fiscalYearEndMonth: 12,
+    calculationVersion: CALCULATION_VERSION,
+    periods: { target: { metrics: {} }, currentYtd: { metrics: {} } },
+    growth: { targetYoY: {}, targetMoM: {} },
+    monthlyReports: [{ year: 1405, month: 5, source: { tracingNo: 101 } }],
+  };
+  const client = {
+    async fetchProductionCompanies() {
+      return [company("TEST"), company("OTHER")];
+    },
+    async fetchIndustries() {
+      return [{ Id: 27, Name: "Test industry" }];
+    },
+    async searchMonthlyReports(options) {
+      searches.push(options);
+      return [
+        { Symbol: "TEST", TracingNo: 101, Title: "Monthly activity" },
+        { Symbol: "BANK", TracingNo: 202, Title: "Monthly activity" },
+      ];
+    },
+    async fetchAndParseReport() {
+      parseCalls += 1;
+      throw new Error("Stored report identities must not be downloaded again.");
+    },
+  };
+
+  const result = await collectMonthlyReportData(
+    {
+      asOf: "1405/06/22",
+      recentDays: 7,
+      existingCompanies: [existingCompany],
+      logger: null,
+    },
+    { client, now: () => new Date("2026-09-13T12:00:00.000Z") },
+  );
+
+  assert.equal(searches.length, 1);
+  assert.equal(searches[0].symbol, undefined);
+  assert.equal(searches[0].fromDate, "1405/06/15");
+  assert.equal(searches[0].toDate, "1405/06/22");
+  assert.equal(parseCalls, 0);
+  assert.deepEqual(result.companies.map((item) => item.symbol), ["TEST"]);
+  assert.equal(result.companies[0].updateAction, "unchanged");
+  assert.equal(result.metadata.recentScan.reportCount, 2);
+  assert.equal(result.metadata.recentScan.matchedCompanyCount, 1);
+});
+
+test("recent scan completes without company requests when no production symbol matched", async () => {
+  const searches = [];
+  const client = {
+    async fetchProductionCompanies() {
+      return [company("TEST")];
+    },
+    async fetchIndustries() {
+      return [{ Id: 27, Name: "Test industry" }];
+    },
+    async searchMonthlyReports(options) {
+      searches.push(options);
+      return [{ Symbol: "BANK", TracingNo: 303 }];
+    },
+  };
+
+  const result = await collectMonthlyReportData(
+    { asOf: "1405/06/22", recentDays: 3, logger: null },
+    { client, now: () => new Date("2026-09-13T12:00:00.000Z") },
+  );
+
+  assert.equal(searches.length, 1);
+  assert.deepEqual(result.companies, []);
+  assert.equal(result.metadata.recentScan.matchedCompanyCount, 0);
+});
+
 test("single-worker bulk mode pauses between completed companies", async () => {
   const events = [];
   const client = {

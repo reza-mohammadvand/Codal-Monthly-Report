@@ -131,7 +131,7 @@ test("selected update refreshes exactly the requested pilot symbols and persists
   assert.equal(service.getUpdateState().completed, 1);
 });
 
-test("all update requests every active manufacturing company", async () => {
+test("all update scans one recent window instead of checking every stored company", async () => {
   const database = fakeDatabase(collection());
   let receivedOptions = null;
   const pilotSymbols = ["فولاد", "فملی", "شپنا", "کگل"];
@@ -140,18 +140,28 @@ test("all update requests every active manufacturing company", async () => {
     pilotSymbols,
     collect: async (options) => {
       receivedOptions = options;
+      await options.onProgress({
+        type: "recent-scan-complete",
+        days: 14,
+        reportCount: 26,
+        matchedCompanyCount: 4,
+      });
       return collection(pilotSymbols);
     },
     logger: null,
   });
 
-  await service.update({ scope: "all" });
-  assert.equal(receivedOptions.allSymbols, true);
+  await service.update({ scope: "all", recentDays: 14 });
+  assert.equal(receivedOptions.allSymbols, undefined);
   assert.equal(receivedOptions.symbols, undefined);
+  assert.equal(receivedOptions.recentDays, 14);
   assert.equal(receivedOptions.requestRetries, 4);
   assert.equal(receivedOptions.concurrency, 1);
-  assert.equal(receivedOptions.refreshReports, true);
+  assert.equal(receivedOptions.refreshReports, false);
   assert.equal(receivedOptions.forceReparseReports, false);
+  assert.equal(service.getUpdateState().recentDays, 14);
+  assert.equal(service.getUpdateState().scannedReportCount, 26);
+  assert.equal(service.getUpdateState().matchedCompanyCount, 4);
 });
 
 test("all update is catalog-driven and persists a manufacturing symbol absent from the database", async () => {
@@ -167,11 +177,12 @@ test("all update is catalog-driven and persists a manufacturing symbol absent fr
   });
 
   const dashboard = await service.update({ scope: "all" });
-  assert.equal(receivedOptions.allSymbols, true);
+  assert.equal(receivedOptions.allSymbols, undefined);
   assert.equal(receivedOptions.symbols, undefined);
-  assert.equal(receivedOptions.refreshReports, true);
+  assert.equal(receivedOptions.recentDays, 7);
+  assert.equal(receivedOptions.refreshReports, false);
   assert.equal(receivedOptions.forceReparseReports, false);
-  assert.deepEqual(receivedOptions.forceReparseSymbols, ["فولاد"]);
+  assert.deepEqual(receivedOptions.forceReparseSymbols, []);
   assert.deepEqual(receivedOptions.existingCompanies.map((item) => item.symbol), ["فولاد"]);
   assert.deepEqual(
     dashboard.industries[0].companies.map((item) => item.symbol),
@@ -193,9 +204,19 @@ test("an empty database performs a full initial download", async () => {
   });
 
   await service.update({ scope: "all" });
+  assert.equal(receivedOptions.allSymbols, true);
+  assert.equal(receivedOptions.recentDays, undefined);
   assert.equal(receivedOptions.refreshSearch, true);
   assert.equal(receivedOptions.refreshReports, true);
   assert.deepEqual(receivedOptions.existingCompanies, []);
+});
+
+test("all update rejects an invalid recent-day window", async () => {
+  const service = new DashboardService({ database: fakeDatabase(), logger: null });
+  await assert.rejects(
+    () => service.update({ scope: "all", recentDays: 0 }),
+    (error) => error instanceof WebServiceError && error.code === "INVALID_RECENT_DAYS",
+  );
 });
 
 test("incremental checks do not rewrite unchanged stored companies", async () => {

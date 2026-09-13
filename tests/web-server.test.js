@@ -98,6 +98,7 @@ test("native form fallbacks export and update when client-side handlers are unav
   await withServer(service, async (baseUrl) => {
     const form = new URLSearchParams();
     form.append("symbols", "فولاد");
+    form.append("recentDays", "12");
 
     const exported = await fetch(`${baseUrl}/actions/export`, {
       method: "POST",
@@ -117,11 +118,11 @@ test("native form fallbacks export and update when client-side handlers are unav
 
     const all = await fetch(`${baseUrl}/actions/update?scope=all`, {
       method: "POST",
-      body: new URLSearchParams(),
+      body: new URLSearchParams({ recentDays: "12" }),
       redirect: "manual",
     });
     assert.equal(all.status, 303);
-    assert.deepEqual(service.updates[1], { scope: "all" });
+    assert.deepEqual(service.updates[1], { scope: "all", recentDays: "12" });
   });
 });
 

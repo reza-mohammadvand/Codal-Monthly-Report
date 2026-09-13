@@ -19,8 +19,9 @@
     <meta name="twitter:image" content="/og.png">
     <link rel="icon" type="image/png" href="/og.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
-    <link rel="stylesheet" href="/styles.css?v=6">
-    <script src="/app.js?v=21" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=8">
+    <script src="/sorting.js?v=1" defer></script>
+    <script src="/app.js?v=24" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
@@ -111,6 +112,21 @@
               <span class="button-icon" aria-hidden="true">↻</span>
               آپدیت انتخاب‌شده‌ها
             </button>
+            <label class="recent-days-control" for="recentDaysInput">
+              <input
+                id="recentDaysInput"
+                name="recentDays"
+                type="number"
+                min="1"
+                max="365"
+                step="1"
+                value="7"
+                inputmode="numeric"
+                form="dashboardActionsForm"
+                aria-label="تعداد روزهای بررسی گزارش‌های جدید"
+              >
+              <span>روز اخیر</span>
+            </label>
             <button
               id="updateAllButton"
               class="button button-primary"
@@ -120,7 +136,7 @@
               formmethod="post"
             >
               <span class="button-icon" aria-hidden="true">↻</span>
-              آپدیت همه
+              آپدیت گزارش‌های جدید
             </button>
           </div>
         </header>
@@ -170,8 +186,7 @@
               </label>
               <details id="metricVisibilityMenu" class="metric-visibility">
                 <summary>
-                  <span>ردیف‌ها</span>
-                  <strong id="metricVisibilitySummary">هر ۴ ردیف</strong>
+                  <span>انتخاب ردیف‌ها</span>
                   <span class="metric-visibility-chevron" aria-hidden="true"></span>
                 </summary>
                 <div class="metric-visibility-options" role="group" aria-label="ردیف‌های قابل نمایش">
@@ -194,11 +209,20 @@
                 </div>
               </details>
               <label class="select-control" for="sortMetric">
-                <select id="sortMetric">
+                <span class="sr-only">شاخص مبنای مرتب‌سازی</span>
+                <select id="sortMetric" aria-label="شاخص مبنای مرتب‌سازی">
                   <option value="dominantProduction">مقدار تولید</option>
                   <option value="dominantSales">مقدار فروش</option>
                   <option value="dominantRevenue" selected>مبلغ فروش</option>
                   <option value="dominantRate">نرخ فروش</option>
+                </select>
+              </label>
+              <label class="select-control" for="sortColumn">
+                <span class="sr-only">ستون رشد مبنای مرتب‌سازی</span>
+                <select id="sortColumn" aria-label="ستون رشد مبنای مرتب‌سازی">
+                  <option value="targetYoY" selected>رشد ماه مبنا نسبت به سال قبل</option>
+                  <option value="ytdYoY">رشد میانگین دوره مالی</option>
+                  <option value="targetMoM">رشد ماه مبنا نسبت به ماه قبل</option>
                 </select>
               </label>
               <div class="sort-direction-control" role="group" aria-label="جهت مرتب‌سازی">

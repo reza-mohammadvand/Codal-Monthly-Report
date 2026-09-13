@@ -34,6 +34,7 @@ const state = {
   expandedSymbols: new Set(),
   searchQuery: "",
   sortMetric: "dominantRevenue",
+  sortColumn: "targetYoY",
   sortDirection: null,
   visibleMetricKeys: new Set(METRICS.map((metric) => metric.key)),
   tableView: false,
@@ -60,8 +61,8 @@ const elements = {
   activeIndustryCompanyCount: document.querySelector("#activeIndustryCompanyCount"),
   companySearch: document.querySelector("#companySearch"),
   metricVisibilityMenu: document.querySelector("#metricVisibilityMenu"),
-  metricVisibilitySummary: document.querySelector("#metricVisibilitySummary"),
   sortMetric: document.querySelector("#sortMetric"),
+  sortColumn: document.querySelector("#sortColumn"),
   sortAscendingButton: document.querySelector("#sortAscendingButton"),
   sortDescendingButton: document.querySelector("#sortDescendingButton"),
   tableViewToggle: document.querySelector("#tableViewToggle"),
@@ -75,6 +76,7 @@ const elements = {
   exportButton: document.querySelector("#exportButton"),
   updateSelectedButton: document.querySelector("#updateSelectedButton"),
   updateAllButton: document.querySelector("#updateAllButton"),
+  recentDaysInput: document.querySelector("#recentDaysInput"),
   updateDialog: document.querySelector("#updateDialog"),
   dialogTitle: document.querySelector("#dialogTitle"),
   dialogDescription: document.querySelector("#dialogDescription"),
@@ -306,6 +308,7 @@ async function loadDashboard() {
 function renderDashboard() {
   renderMetadata();
   renderIndustryList();
+  renderSortColumnOptions();
   renderActiveIndustry();
   renderSelectionState();
   elements.appShell.setAttribute("aria-busy", "false");
@@ -508,19 +511,15 @@ function renderActiveIndustry() {
 
 function sortCompanies(companies) {
   if (!state.sortDirection) return [...companies];
-  const direction = state.sortDirection === "asc" ? 1 : -1;
   return [...companies].sort((left, right) => {
-    const leftValue = finiteNumber(left.periods?.target?.metrics?.[state.sortMetric]);
-    const rightValue = finiteNumber(right.periods?.target?.metrics?.[state.sortMetric]);
-    if (leftValue === null && rightValue === null) {
-      return companySymbol(left).localeCompare(companySymbol(right), "fa");
-    }
-    if (leftValue === null) return 1;
-    if (rightValue === null) return -1;
-    if (leftValue === rightValue) {
-      return companySymbol(left).localeCompare(companySymbol(right), "fa");
-    }
-    return (leftValue - rightValue) * direction;
+    const leftValue = finiteNumber(left.growth?.[state.sortColumn]?.[state.sortMetric]);
+    const rightValue = finiteNumber(right.growth?.[state.sortColumn]?.[state.sortMetric]);
+    const comparison = globalThis.CodalDashboardSorting.compareNullableNumbers(
+      leftValue,
+      rightValue,
+      state.sortDirection,
+    );
+    return comparison || companySymbol(left).localeCompare(companySymbol(right), "fa");
   });
 }
 
@@ -788,6 +787,7 @@ function renderSelectionState() {
   elements.exportButton.setAttribute("aria-disabled", String(count === 0 || busy));
   elements.updateSelectedButton.setAttribute("aria-disabled", String(count === 0 || busy));
   elements.updateAllButton.disabled = busy;
+  elements.recentDaysInput.disabled = busy;
   syncNativeActionForm();
 
   elements.exportButton.setAttribute(
@@ -909,7 +909,13 @@ function updateProgressMessage(update) {
   const symbol = update?.symbol ? ` — ${update.symbol}` : "";
   const updated = finiteNumber(update?.updatedCount) ?? 0;
   const unchanged = finiteNumber(update?.unchangedCount) ?? 0;
-  return `در حال بروزرسانی ${progress}${symbol} — جدید ${faInteger.format(updated)}، بدون تغییر ${faInteger.format(unchanged)}`;
+  const scan = finiteNumber(update?.recentDays);
+  const matched = finiteNumber(update?.matchedCompanyCount) ?? 0;
+  if (scan && !total && !matched) {
+    return `در حال جست‌وجوی گزارش‌های ماهانه ${faInteger.format(scan)} روز اخیر در کدال…`;
+  }
+  const scanLabel = scan ? `بازه ${faInteger.format(scan)} روزه — ` : "";
+  return `${scanLabel}در حال بروزرسانی ${progress}${symbol} — جدید ${faInteger.format(updated)}، بدون تغییر ${faInteger.format(unchanged)}`;
 }
 
 function stopUpdateMonitor() {
@@ -947,12 +953,18 @@ function monitorActiveUpdate() {
 
 async function performUpdate(scope) {
   const symbols = scope === "selected" ? [...state.selectedSymbols] : undefined;
+  const recentDays = scope === "all" ? Number(elements.recentDaysInput.value) : null;
+  if (scope === "all" && (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 365)) {
+    showToast("تعداد روزهای بررسی باید عددی صحیح بین ۱ تا ۳۶۵ باشد.", "error");
+    elements.recentDaysInput.focus();
+    return;
+  }
   state.busyAction = "update";
   renderSelectionState();
   elements.dashboardContent.setAttribute("aria-busy", "true");
   showToast(
     scope === "all"
-      ? "در حال بررسی همه شرکت‌های تولیدی، نمادهای جدید و اطلاعات ناقص در کدال…"
+      ? `در حال جست‌وجوی گزارش‌های ماهانه ${faInteger.format(recentDays)} روز اخیر و تطبیق با شرکت‌های تولیدی…`
       : `در حال بررسی اطلاعیه‌های جدید و اطلاعات ناقص ${faInteger.format(symbols?.length ?? 0)} نماد انتخاب‌شده…`,
     "busy",
     { persistent: true },
@@ -962,12 +974,23 @@ async function performUpdate(scope) {
     const response = await fetch("/api/update", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ scope, ...(symbols ? { symbols } : {}) }),
+      body: JSON.stringify({
+        scope,
+        ...(symbols ? { symbols } : {}),
+        ...(scope === "all" ? { recentDays } : {}),
+      }),
     });
     if (!response.ok) throw new Error(await responseError(response));
     stopUpdateMonitor();
-    ingestDashboard(await response.json(), { preserveSelection: true });
-    showToast("اطلاعات با موفقیت بروزرسانی و ذخیره شد.", "success");
+    const dashboard = await response.json();
+    ingestDashboard(dashboard, { preserveSelection: true });
+    const matched = finiteNumber(dashboard?.metadata?.update?.matchedCompanyCount);
+    showToast(
+      scope === "all" && matched === 0
+        ? "در این بازه گزارش ماهانهٔ جدیدی برای شرکت‌های تولیدی پیدا نشد."
+        : "اطلاعات با موفقیت بروزرسانی و ذخیره شد.",
+      "success",
+    );
   } catch (error) {
     showToast(error.message || "بروزرسانی اطلاعات ناموفق بود.", "error");
   } finally {
@@ -1081,13 +1104,18 @@ elements.companySearch.addEventListener("input", () => {
 });
 
 function renderMetricVisibilityState() {
-  const count = state.visibleMetricKeys.size;
-  elements.metricVisibilitySummary.textContent = count === METRICS.length
-    ? "هر ۴ ردیف"
-    : `${faInteger.format(count)} ردیف`;
   elements.metricVisibilityMenu.querySelectorAll("[data-metric-visibility]").forEach((checkbox) => {
     checkbox.checked = state.visibleMetricKeys.has(checkbox.dataset.metricVisibility);
   });
+}
+
+function renderSortColumnOptions() {
+  const sample = allCompanies()[0];
+  for (const column of GROWTH_COLUMNS) {
+    const option = elements.sortColumn.querySelector(`option[value="${column.key}"]`);
+    if (option) option.textContent = definitionLabel(sample, column, true);
+  }
+  elements.sortColumn.value = state.sortColumn;
 }
 
 elements.metricVisibilityMenu.addEventListener("change", (event) => {
@@ -1108,15 +1136,26 @@ elements.metricVisibilityMenu.addEventListener("change", (event) => {
 
 elements.sortMetric.addEventListener("change", () => {
   state.sortMetric = elements.sortMetric.value;
+  setSortDirection(null);
   renderActiveIndustry();
 });
 
-function toggleSortDirection(direction) {
-  state.sortDirection = state.sortDirection === direction ? null : direction;
+elements.sortColumn.addEventListener("change", () => {
+  state.sortColumn = elements.sortColumn.value;
+  setSortDirection(null);
+  renderActiveIndustry();
+});
+
+function setSortDirection(direction) {
+  state.sortDirection = direction;
   elements.sortAscendingButton.classList.toggle("active", state.sortDirection === "asc");
   elements.sortDescendingButton.classList.toggle("active", state.sortDirection === "desc");
   elements.sortAscendingButton.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
   elements.sortDescendingButton.setAttribute("aria-pressed", String(state.sortDirection === "desc"));
+}
+
+function toggleSortDirection(direction) {
+  setSortDirection(state.sortDirection === direction ? null : direction);
   renderActiveIndustry();
 }
 

@@ -39,6 +39,18 @@ function cleanSymbolList(values) {
   return symbols;
 }
 
+function normalizeRecentDays(value, fallback = 7) {
+  const days = Number(value ?? fallback);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    throw new WebServiceError(
+      "تعداد روزهای بررسی باید عددی صحیح بین ۱ تا ۳۶۵ باشد.",
+      400,
+      "INVALID_RECENT_DAYS",
+    );
+  }
+  return days;
+}
+
 function resolveAllowedSymbols(values, allowedSymbols) {
   const requested = cleanSymbolList(values);
   const allowed = new Map(
@@ -160,6 +172,9 @@ export class DashboardService {
       errorCount: 0,
       updatedCount: 0,
       unchangedCount: 0,
+      recentDays: null,
+      scannedReportCount: 0,
+      matchedCompanyCount: 0,
     };
   }
 
@@ -186,7 +201,7 @@ export class DashboardService {
     return { ...this.updateState };
   }
 
-  async update({ scope, symbols = [], asOf = null } = {}) {
+  async update({ scope, symbols = [], asOf = null, recentDays = null } = {}) {
     if (this.activeUpdate) {
       throw new WebServiceError(
         "یک بروزرسانی دیگر در حال اجراست.",
@@ -203,6 +218,10 @@ export class DashboardService {
       .filter(Boolean);
     const storedSymbolSet = new Set(storedSymbols.map(normalizeCodalText));
     const initialLoad = storedCompanies.length === 0;
+    const requestedRecentDays = updateAll ? normalizeRecentDays(recentDays) : null;
+    const recentScanDays = updateAll && !initialLoad
+      ? requestedRecentDays
+      : null;
     const selectedSymbols = scope === "selected"
       ? resolveAllowedSymbols(symbols, [...this.pilotSymbols, ...storedSymbols])
       : updateAll ? [] : null;
@@ -224,7 +243,8 @@ export class DashboardService {
     const forceReparseSymbols = storedCompanies
       .filter((company) => (
         hasIncompleteDisplayedData(company)
-        && (updateAll || selectedSymbolSet.has(normalizeCodalText(company.symbol)))
+        && !updateAll
+        && selectedSymbolSet.has(normalizeCodalText(company.symbol))
       ))
       .map((company) => company.symbol)
       .filter(Boolean);
@@ -245,12 +265,17 @@ export class DashboardService {
       errorCount: 0,
       updatedCount: 0,
       unchangedCount: 0,
+      recentDays: recentScanDays,
+      scannedReportCount: 0,
+      matchedCompanyCount: 0,
     };
 
     const run = (async () => {
       try {
         const collection = await this.collect({
-          ...(updateAll ? { allSymbols: true } : { symbols: selectedSymbols }),
+          ...(updateAll
+            ? initialLoad ? { allSymbols: true } : { recentDays: recentScanDays }
+            : { symbols: selectedSymbols }),
           asOf,
           cacheDir: this.cacheDir,
           concurrency: this.concurrency,
@@ -278,6 +303,15 @@ export class DashboardService {
             });
           },
           onProgress: (event) => {
+            if (event?.type === "recent-scan-complete") {
+              this.updateState = {
+                ...this.updateState,
+                recentDays: Number(event.days) || this.updateState.recentDays,
+                scannedReportCount: Number(event.reportCount) || 0,
+                matchedCompanyCount: Number(event.matchedCompanyCount) || 0,
+              };
+              return;
+            }
             if (event?.type === "companies-selected") {
               this.updateState = {
                 ...this.updateState,
