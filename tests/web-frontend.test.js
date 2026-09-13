@@ -63,7 +63,7 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
   assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
   assert.match(html, /sorting\.js\?v=1" defer/);
-  assert.match(html, /app\.js\?v=24" defer/);
+  assert.match(html, /app\.js\?v=25" defer/);
   assert.match(html, /id="dashboardActionsForm"/);
   assert.match(html, /formaction="\/actions\/export"/);
   assert.match(html, /formaction="\/actions\/update\?scope=selected"/);
@@ -95,6 +95,11 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /faDecimal = new Intl\.NumberFormat\("fa-IR", \{ maximumFractionDigits: 0 \}\)/);
   assert.match(app, /minimumFractionDigits: 0,[\s\S]*maximumFractionDigits: 0,/);
   assert.match(app, /function renderUnifiedTable\(companies\)/);
+  assert.match(app, /function codalSymbolLink\(symbol\)/);
+  assert.match(app, /https:\/\/www\.codal\.ir\/ReportList\.aspx\?search&Symbol=/);
+  assert.match(app, /data-codal-symbol-link/);
+  assert.match(app, /target="_blank"/);
+  assert.match(app, /event\.target\.closest\("\[data-codal-symbol-link\]"\)/);
   assert.match(app, /function visibleMetrics\(\)/);
   assert.match(app, /function renderMetricVisibilityState\(\)/);
   assert.doesNotMatch(html, /type="module"/);

@@ -925,6 +925,54 @@ input[type="checkbox"] {
   font-weight: 900;
 }
 
+.company-symbol-group,
+.unified-symbol-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+}
+
+.codal-symbol-link {
+  position: relative;
+  z-index: 7;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  color: var(--cyan);
+  background: rgba(64, 217, 200, 0.07);
+  border: 1px solid rgba(64, 217, 200, 0.2);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.codal-symbol-link:hover {
+  color: #d9fffa;
+  background: rgba(64, 217, 200, 0.16);
+  border-color: rgba(64, 217, 200, 0.42);
+  transform: translateY(-1px);
+}
+
+.codal-symbol-link:focus-visible {
+  outline: 2px solid rgba(64, 217, 200, 0.58);
+  outline-offset: 2px;
+}
+
+.codal-symbol-link svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
 .company-name {
   overflow: hidden;
   color: var(--muted);
@@ -1202,6 +1250,12 @@ input[type="checkbox"] {
 .unified-company-identity strong {
   color: #effcf9;
   font-size: 15px;
+}
+
+.unified-company-identity .codal-symbol-link {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
 }
 
 .unified-company-identity small {

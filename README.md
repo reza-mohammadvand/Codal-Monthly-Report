@@ -117,6 +117,8 @@ Dashboard controls can sort companies by any of the four metrics and any of the
 three growth columns, in ascending or descending order. The unified-table toggle replaces expandable
 company cards with one comparison table where every company occupies four
 consecutive metric rows.
+The external-link icon beside each symbol opens that issuer's Codal disclosure
+list in a new browser tab.
 Progress is shown while the full run is active, and each finished company is
 saved immediately so a later failure cannot discard earlier results.
 Updates are incremental. The recent-window scan compares tracing numbers from

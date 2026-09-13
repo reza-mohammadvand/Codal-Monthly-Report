@@ -196,6 +196,27 @@ function companySymbol(company) {
   return String(company?.symbol ?? "").trim();
 }
 
+function codalSymbolLink(symbol) {
+  if (!symbol) return "";
+  const href = `https://www.codal.ir/ReportList.aspx?search&Symbol=${encodeURIComponent(symbol)}`;
+  return `
+    <a
+      class="codal-symbol-link"
+      data-codal-symbol-link
+      href="${escapeHtml(href)}"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="نمایش اطلاعیه‌های ${escapeHtml(symbol)} در کدال"
+      aria-label="بازکردن صفحه کدال نماد ${escapeHtml(symbol)}"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M14 5h5v5M19 5l-8 8"></path>
+        <path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>
+      </svg>
+    </a>
+  `;
+}
+
 function allCompanies() {
   return getIndustries().flatMap((industry) => (
     Array.isArray(industry.companies) ? industry.companies : []
@@ -622,8 +643,11 @@ function renderUnifiedTable(companies) {
                   <span class="sr-only">انتخاب نماد ${escapeHtml(symbol)}</span>
                   <input type="checkbox" data-company-checkbox="${escapeHtml(symbol)}" ${selected ? "checked" : ""}>
                 </label>
-                <span>
-                  <strong>${escapeHtml(symbol || "—")}</strong>
+                <span class="unified-company-main">
+                  <span class="unified-symbol-line">
+                    <strong>${escapeHtml(symbol || "—")}</strong>
+                    ${codalSymbolLink(symbol)}
+                  </span>
                   <small title="${escapeHtml(company.name || "")}">${escapeHtml(company.name || "نام شرکت ثبت نشده")}</small>
                 </span>
                 <span class="badge status-${tone}">${escapeHtml(status)}</span>
@@ -714,7 +738,10 @@ function renderCompanyCard(company) {
             <span class="sr-only">انتخاب نماد ${escapeHtml(symbol)}</span>
             <input type="checkbox" data-company-checkbox="${escapeHtml(symbol)}" ${selected ? "checked" : ""}>
           </label>
-          <span class="company-symbol">${escapeHtml(symbol || "—")}</span>
+          <span class="company-symbol-group">
+            <span class="company-symbol">${escapeHtml(symbol || "—")}</span>
+            ${codalSymbolLink(symbol)}
+          </span>
           <span class="company-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
         </div>
         <div class="company-badges">
@@ -1086,12 +1113,13 @@ elements.dashboardContent.addEventListener("click", (event) => {
     toggleCompany(checkbox.dataset.companyCheckbox, checkbox.checked);
     return;
   }
+  if (event.target.closest("[data-codal-symbol-link]")) return;
   const toggle = event.target.closest("[data-company-toggle]");
   if (toggle) toggleCompanyDetails(toggle.dataset.companyToggle);
 });
 
 elements.dashboardContent.addEventListener("keydown", (event) => {
-  if (event.target.closest(".company-check")) return;
+  if (event.target.closest(".company-check, [data-codal-symbol-link]")) return;
   const toggle = event.target.closest("[data-company-toggle]");
   if (!toggle || (event.key !== "Enter" && event.key !== " ")) return;
   event.preventDefault();
