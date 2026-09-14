@@ -843,6 +843,11 @@ function toggleIndustry(key, checked) {
     ? allCompanies()
     : getIndustries().find((item, index) => industryKey(item, index) === key)?.companies;
   if (!companies) return;
+  if (key === ALL_INDUSTRIES_KEY && checked) {
+    state.activeIndustryId = ALL_INDUSTRIES_KEY;
+    state.searchQuery = "";
+    elements.companySearch.value = "";
+  }
   for (const company of companies) {
     const symbol = companySymbol(company);
     if (!symbol) continue;

@@ -39,9 +39,10 @@ test("company summaries control animated, keyboard-accessible detail panels", as
 });
 
 test("selecting companies immediately enables selected update and Excel export", async () => {
-  const [app, html] = await Promise.all([
+  const [app, html, css] = await Promise.all([
     fs.readFile(APP_FILE, "utf8"),
     fs.readFile(INDEX_FILE, "utf8"),
+    fs.readFile(CSS_FILE, "utf8"),
   ]);
   assert.match(app, /dashboardContent\.addEventListener\("input"/);
   assert.match(app, /industryList\.addEventListener\("input"/);
@@ -63,7 +64,7 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
   assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
   assert.match(html, /sorting\.js\?v=1" defer/);
-  assert.match(html, /app\.js\?v=25" defer/);
+  assert.match(html, /app\.js\?v=26" defer/);
   assert.match(html, /id="dashboardActionsForm"/);
   assert.match(html, /formaction="\/actions\/export"/);
   assert.match(html, /formaction="\/actions\/update\?scope=selected"/);
@@ -75,6 +76,26 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /function openIncompleteDialog\(\)/);
   assert.match(app, /نتایج جست‌وجو در همه صنایع/);
   assert.match(app, /const ALL_INDUSTRIES_KEY = "__all__"/);
+  assert.match(app, /key === ALL_INDUSTRIES_KEY && checked/);
+  assert.match(app, /state\.activeIndustryId = ALL_INDUSTRIES_KEY/);
+  assert.match(css, /\.unified-table\s*\{[^}]*min-width:\s*0;[^}]*table-layout:\s*fixed;/s);
+  assert.match(css, /\.unified-table \.unified-company-column\s*\{[^}]*width:\s*150px;/s);
+  assert.match(css, /\.unified-table \.unified-metric-column\s*\{[^}]*width:\s*118px;/s);
+  assert.match(css, /\.unified-table \.metric-value\s*\{[^}]*font-size:\s*12px;/s);
+  assert.match(css, /\.metrics-table:not\(\.unified-table\)/);
+  assert.match(html, /class="toolbar-context"/);
+  assert.match(html, /class="toolbar-primary-controls"/);
+  assert.match(html, /class="toolbar-right-pane"/);
+  assert.match(html, /class="toolbar-left-pane"/);
+  assert.match(html, /class="toolbar-sort-actions"/);
+  assert.match(html, /<div class="toolbar-controls">\s*<div class="toolbar-right-pane">\s*<div class="toolbar-context">/s);
+  assert.match(css, /\.toolbar-context\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/s);
+  assert.match(css, /\.toolbar-controls\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s);
+  assert.match(css, /\.toolbar-right-pane,\s*\.toolbar-left-pane\s*\{[^}]*grid-template-rows:\s*auto auto;/s);
+  assert.match(css, /\.company-header\s*\{[^}]*grid-template-columns:\s*320px minmax\(0, 1fr\)/s);
+  assert.match(html, /<fieldset class="sort-basis-control">/);
+  assert.match(html, /<legend>مرتب کردن براساس:<\/legend>/);
+  assert.match(html, /class="sort-basis-fields"/);
   assert.match(html, /id="sortMetric"/);
   assert.match(html, /id="sortColumn"/);
   assert.equal((html.match(/<option value="(?:targetYoY|ytdYoY|targetMoM)"/g) ?? []).length, 3);

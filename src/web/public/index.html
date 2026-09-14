@@ -19,9 +19,9 @@
     <meta name="twitter:image" content="/og.png">
     <link rel="icon" type="image/png" href="/og.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
-    <link rel="stylesheet" href="/styles.css?v=9">
+    <link rel="stylesheet" href="/styles.css?v=14">
     <script src="/sorting.js?v=1" defer></script>
-    <script src="/app.js?v=25" defer></script>
+    <script src="/app.js?v=26" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
@@ -165,83 +165,95 @@
           </section>
 
           <section class="content-toolbar" aria-label="فیلتر شرکت‌ها">
-            <div>
-              <p class="eyebrow">صنعت فعال</p>
-              <div class="industry-title-line">
-                <h2 id="activeIndustryTitle">—</h2>
-                <span id="activeIndustryCompanyCount" class="subtle-badge">۰ شرکت</span>
-              </div>
-            </div>
             <div class="toolbar-controls">
-                            <label class="search-field" for="companySearch">
-                <span aria-hidden="true">⌕</span>
-                <span class="sr-only">جست‌وجوی نماد یا نام شرکت</span>
-                <input
-                  id="companySearch"
-                  type="search"
-                  inputmode="search"
-                  placeholder="جست‌وجو"
-                  autocomplete="off"
-                >
-              </label>
-              <details id="metricVisibilityMenu" class="metric-visibility">
-                <summary>
-                  <span>انتخاب ردیف‌ها</span>
-                  <span class="metric-visibility-chevron" aria-hidden="true"></span>
-                </summary>
-                <div class="metric-visibility-options" role="group" aria-label="ردیف‌های قابل نمایش">
-                  <label>
-                    <input type="checkbox" data-metric-visibility="dominantProduction" checked>
-                    <span>مقدار تولید</span>
-                  </label>
-                  <label>
-                    <input type="checkbox" data-metric-visibility="dominantSales" checked>
-                    <span>مقدار فروش</span>
-                  </label>
-                  <label>
-                    <input type="checkbox" data-metric-visibility="dominantRevenue" checked>
-                    <span>مبلغ فروش</span>
-                  </label>
-                  <label>
-                    <input type="checkbox" data-metric-visibility="dominantRate" checked>
-                    <span>نرخ فروش</span>
-                  </label>
+              <div class="toolbar-right-pane">
+                <div class="toolbar-context">
+                  <p class="eyebrow">صنعت فعال</p>
+                  <div class="industry-title-line">
+                    <h2 id="activeIndustryTitle">—</h2>
+                    <span id="activeIndustryCompanyCount" class="subtle-badge">۰ شرکت</span>
+                  </div>
                 </div>
-              </details>
-              <label class="select-control" for="sortMetric">
-                <span class="sr-only">شاخص مبنای مرتب‌سازی</span>
-                <select id="sortMetric" aria-label="شاخص مبنای مرتب‌سازی">
-                  <option value="dominantProduction">مقدار تولید</option>
-                  <option value="dominantSales">مقدار فروش</option>
-                  <option value="dominantRevenue" selected>مبلغ فروش</option>
-                  <option value="dominantRate">نرخ فروش</option>
-                </select>
-              </label>
-              <label class="select-control" for="sortColumn">
-                <span class="sr-only">ستون رشد مبنای مرتب‌سازی</span>
-                <select id="sortColumn" aria-label="ستون رشد مبنای مرتب‌سازی">
-                  <option value="targetYoY" selected>رشد ماه مبنا نسبت به سال قبل</option>
-                  <option value="ytdYoY">رشد میانگین دوره مالی</option>
-                  <option value="targetMoM">رشد ماه مبنا نسبت به ماه قبل</option>
-                </select>
-              </label>
-              <div class="sort-direction-control" role="group" aria-label="جهت مرتب‌سازی">
-                <div class="sort-direction-buttons">
-                  <button id="sortAscendingButton" type="button" aria-pressed="false">
-                    <span aria-hidden="true">↑</span>
-                    صعودی
-                  </button>
-                  <button id="sortDescendingButton" type="button" aria-pressed="false">
-                    <span aria-hidden="true">↓</span>
-                    نزولی
-                  </button>
+                <div class="toolbar-primary-controls">
+                  <label class="search-field" for="companySearch">
+                    <span aria-hidden="true">⌕</span>
+                    <span class="sr-only">جست‌وجوی نماد یا نام شرکت</span>
+                    <input
+                      id="companySearch"
+                      type="search"
+                      inputmode="search"
+                      placeholder="جست‌وجو"
+                      autocomplete="off"
+                    >
+                  </label>
+                  <details id="metricVisibilityMenu" class="metric-visibility">
+                    <summary>
+                      <span>انتخاب ردیف‌ها</span>
+                      <span class="metric-visibility-chevron" aria-hidden="true"></span>
+                    </summary>
+                    <div class="metric-visibility-options" role="group" aria-label="ردیف‌های قابل نمایش">
+                      <label>
+                        <input type="checkbox" data-metric-visibility="dominantProduction" checked>
+                        <span>مقدار تولید</span>
+                      </label>
+                      <label>
+                        <input type="checkbox" data-metric-visibility="dominantSales" checked>
+                        <span>مقدار فروش</span>
+                      </label>
+                      <label>
+                        <input type="checkbox" data-metric-visibility="dominantRevenue" checked>
+                        <span>مبلغ فروش</span>
+                      </label>
+                      <label>
+                        <input type="checkbox" data-metric-visibility="dominantRate" checked>
+                        <span>نرخ فروش</span>
+                      </label>
+                    </div>
+                  </details>
                 </div>
               </div>
-              <label class="table-view-control" for="tableViewToggle">
-                <input id="tableViewToggle" type="checkbox">
-                <span>نمایش یکپارچه جدولی</span>
-              </label>
-
+              <div class="toolbar-left-pane">
+                <fieldset class="sort-basis-control">
+                  <legend>مرتب کردن براساس:</legend>
+                  <div class="sort-basis-fields">
+                    <label class="select-control" for="sortMetric">
+                      <span>ردیف</span>
+                      <select id="sortMetric" aria-label="شاخص مبنای مرتب‌سازی">
+                        <option value="dominantProduction">مقدار تولید</option>
+                        <option value="dominantSales">مقدار فروش</option>
+                        <option value="dominantRevenue" selected>مبلغ فروش</option>
+                        <option value="dominantRate">نرخ فروش</option>
+                      </select>
+                    </label>
+                    <label class="select-control" for="sortColumn">
+                      <span>ستون رشد</span>
+                      <select id="sortColumn" aria-label="ستون رشد مبنای مرتب‌سازی">
+                        <option value="targetYoY" selected>رشد ماه مبنا نسبت به سال قبل</option>
+                        <option value="ytdYoY">رشد میانگین دوره مالی</option>
+                        <option value="targetMoM">رشد ماه مبنا نسبت به ماه قبل</option>
+                      </select>
+                    </label>
+                  </div>
+                </fieldset>
+                <div class="toolbar-sort-actions">
+                  <div class="sort-direction-control" role="group" aria-label="جهت مرتب‌سازی">
+                    <div class="sort-direction-buttons">
+                      <button id="sortAscendingButton" type="button" aria-pressed="false">
+                        <span aria-hidden="true">↑</span>
+                        صعودی
+                      </button>
+                      <button id="sortDescendingButton" type="button" aria-pressed="false">
+                        <span aria-hidden="true">↓</span>
+                        نزولی
+                      </button>
+                    </div>
+                  </div>
+                  <label class="table-view-control" for="tableViewToggle">
+                    <input id="tableViewToggle" type="checkbox">
+                    <span>نمایش یکپارچه جدولی</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </section>
 
