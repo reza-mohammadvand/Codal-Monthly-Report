@@ -90,11 +90,11 @@ const METRICS = Object.freeze([
   {
     key: 'dominantProduction',
     aliases: ['dominantProduction', 'dominantProductProduction'],
-    label: 'مقدار تولید سبد غالب',
-    description: 'مقدار تولید کوچک‌ترین سبد محصولات که بر اساس مبلغ فروش مرتب شده و بیش از ۵۰٪ مبلغ فروش دوره را پوشش می‌دهد.',
+    label: 'مجموع تولید',
+    description: 'مجموع مقدار تولید همه ردیف‌های محصول؛ ابتدا جمع گزارش‌شده کدال و در نبود آن جمع سلول‌های محصول استفاده می‌شود.',
     defaultUnit: 'واحد محصول',
     numberFormat: '#,##0;[Red](#,##0);-',
-    dominantProduct: true,
+    dominantProduct: false,
   },
   {
     key: 'dominantSales',
@@ -104,11 +104,11 @@ const METRICS = Object.freeze([
       'mainProductSales',
       'dominant_sales',
     ],
-    label: 'مقدار فروش سبد غالب',
-    description: 'مقدار فروش محصولات منتخب در سبد غالب؛ در صورت ناسازگاری واحد محصولات خالی می‌ماند.',
+    label: 'مجموع فروش',
+    description: 'مجموع مقدار فروش همه ردیف‌های محصول، حتی اگر واحد محصولات با یکدیگر متفاوت باشد.',
     defaultUnit: 'واحد محصول',
     numberFormat: '#,##0;[Red](#,##0);-',
-    dominantProduct: true,
+    dominantProduct: false,
   },
   {
     key: 'dominantRevenue',
@@ -118,11 +118,11 @@ const METRICS = Object.freeze([
       'mainProductRevenue',
       'dominant_revenue',
     ],
-    label: 'مبلغ فروش سبد غالب',
-    description: 'جمع مبلغ فروش محصولات منتخب؛ این سبد حداقل تعداد محصول لازم برای عبور از سهم تجمعی ۵۰٪ است.',
+    label: 'مجموع مبلغ فروش',
+    description: 'مجموع مبلغ فروش همه محصولات؛ جمع نهایی کدال بر جمع محاسبه‌شده از سلول‌ها اولویت دارد.',
     defaultUnit: 'میلیون ریال',
     numberFormat: '#,##0;[Red](#,##0);-',
-    dominantProduct: true,
+    dominantProduct: false,
   },
   {
     key: 'dominantRate',
@@ -132,11 +132,11 @@ const METRICS = Object.freeze([
       'mainProductRate',
       'dominant_rate',
     ],
-    label: 'نرخ فروش سبد غالب',
-    description: 'مبلغ فروش ریالی سبد غالب تقسیم بر مقدار فروش همان سبد؛ میانگین ساده نرخ محصولات نیست.',
+    label: 'نرخ فروش کل',
+    description: 'مبلغ فروش کلِ تبدیل‌شده به ریال تقسیم بر مقدار فروش کل؛ این شاخص نرخ موزون فروش است.',
     defaultUnit: 'ریال / واحد محصول',
     numberFormat: '#,##0;[Red](#,##0);-',
-    dominantProduct: true,
+    dominantProduct: false,
   },
 ]);
 
@@ -212,22 +212,6 @@ function rawMetric(period, metric) {
   return firstDefined(metricContainer(period), metric.aliases);
 }
 
-function dominantProductName(period, rawValue) {
-  if (rawValue && typeof rawValue === 'object') {
-    const rawName = firstDefined(rawValue, [
-      'dominantProductName',
-      'productName',
-      'name',
-    ]);
-    if (textValue(rawName)) return textValue(rawName);
-  }
-  return textValue(
-    firstDefined(period, ['dominantProductName', 'mainProductName'])
-      ?? period?.dominantProduct?.name
-      ?? period?.meta?.dominantProductName,
-  );
-}
-
 function rawUnit(period, metric, rawValue) {
   if (rawValue && typeof rawValue === 'object') {
     const embedded = firstDefined(rawValue, ['unit', 'measurementUnit', 'uom']);
@@ -240,29 +224,38 @@ function rawUnit(period, metric, rawValue) {
     ?? firstDefined(period, metric.aliases.map((alias) => `${alias}Unit`));
   if (textValue(metricSpecificUnit)) return textValue(metricSpecificUnit);
 
+  const unitMismatch = period?.unitMismatch === true
+    || (period?.unitsCompatible === false && finiteNumber(period?.reportCount) > 0);
+  if (unitMismatch) {
+    if (metric.key === 'dominantRevenue') return metric.defaultUnit;
+    return metric.key === 'dominantRate'
+      ? 'نرخ محاسبه‌شده با واحدهای مختلف'
+      : 'واحدهای مختلف';
+  }
+
   if (metric.key === 'dominantRevenue') {
     return textValue(period?.revenueUnit ?? period?.meta?.revenueUnit, metric.defaultUnit);
   }
 
   if (metric.key === 'dominantProduction' || metric.key === 'dominantSales') {
     return textValue(
-      period?.dominantProductUnit
+      (typeof period?.unit === 'string' ? period.unit : null)
+        ?? period?.dominantProductUnit
         ?? period?.dominantProduct?.unit
-        ?? period?.meta?.dominantProductUnit
-        ?? (typeof period?.unit === 'string' ? period.unit : null),
+        ?? period?.meta?.dominantProductUnit,
       metric.defaultUnit,
     );
   }
 
   if (metric.key === 'dominantRate') {
     const unit = textValue(
-      period?.dominantProductRateUnit
+      (typeof period?.unit === 'string' ? period.unit : null)
+        ?? period?.dominantProductRateUnit
         ?? period?.dominantProduct?.rateUnit
         ?? period?.meta?.dominantProductRateUnit
         ?? period?.dominantProductUnit
         ?? period?.dominantProduct?.unit
-        ?? period?.meta?.dominantProductUnit
-        ?? (typeof period?.unit === 'string' ? period.unit : null),
+        ?? period?.meta?.dominantProductUnit,
     );
     return unit ? `ریال / ${unit}` : metric.defaultUnit;
   }
@@ -278,7 +271,6 @@ function extractMetric(period, metric) {
   return {
     value: finiteNumber(rawValue),
     unit: rawUnit(period, metric, rawValue),
-    productName: dominantProductName(period, rawValue),
   };
 }
 
@@ -413,12 +405,6 @@ function resolveMetricUnit(periodEntries, metric) {
   return 'متغیر؛ طبق یادداشت سلول';
 }
 
-function resolveTargetProduct(periodEntries) {
-  return periodEntries[4]?.productName
-    || [...periodEntries].reverse().find((entry) => entry.productName)?.productName
-    || '';
-}
-
 function periodSourceUrl(period) {
   const direct = firstDefined(period, ['sourceUrl', 'url', 'reportUrl', 'htmlUrl']);
   if (typeof direct === 'string') return direct;
@@ -427,14 +413,11 @@ function periodSourceUrl(period) {
   return textValue(firstDefined(source, ['url', 'sourceUrl', 'reportUrl', 'htmlUrl']));
 }
 
-function buildCellNote(period, metricEntry, metric) {
+function buildCellNote(period) {
   const lines = [];
-  if (metric.dominantProduct && metricEntry.productName) {
-    lines.push(`سبد غالب این دوره: ${metricEntry.productName}`);
-  }
-  if (metric.dominantProduct && metricEntry.unit) {
-    lines.push(`واحد این دوره: ${metricEntry.unit}`);
-  }
+  const unitMismatch = period?.unitMismatch === true
+    || (period?.unitsCompatible === false && finiteNumber(period?.reportCount) > 0);
+  if (unitMismatch) lines.push('عدم تطابق واحد؛ مجموع بدون تبدیل واحد محاسبه شده است.');
   const reportCount = finiteNumber(period?.reportCount ?? period?.meta?.reportCount);
   const requestedCount = finiteNumber(
     period?.requestedMonthCount ?? period?.meta?.requestedMonthCount,
@@ -448,7 +431,7 @@ function buildCellNote(period, metricEntry, metric) {
     incomplete = true;
   }
   const sourceUrl = periodSourceUrl(period);
-  if (sourceUrl && (metric.dominantProduct || incomplete)) lines.push(`منبع: ${sourceUrl}`);
+  if (sourceUrl && (unitMismatch || incomplete)) lines.push(`منبع: ${sourceUrl}`);
   return lines.join('\n');
 }
 
@@ -541,7 +524,7 @@ function configureIndustrySheet(sheet, industryName, columnLabels, metadata) {
     'نام شرکت',
     'شاخص',
     'واحد',
-    'سبد غالب (ماه مبنا)',
+    'وضعیت واحدها',
     ...compactColumnLabels(columnLabels),
   ];
   const header = sheet.getRow(HEADER_ROW);
@@ -589,7 +572,9 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
     const rowNumber = startRow + metricIndex;
     const row = sheet.getRow(rowNumber);
     const entries = periods.map((period) => extractMetric(period, metric));
-    const targetProduct = resolveTargetProduct(entries);
+    const unitMismatch = company?.unitMismatch === true
+      || periods.some((period) => period?.unitMismatch === true
+        || (period?.unitsCompatible === false && finiteNumber(period?.reportCount) > 0));
     row.height = 25;
     row.getCell(1).value = metricIndex === 0 ? symbol : null;
     row.getCell(2).value = metricIndex === 0
@@ -597,13 +582,13 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
       : null;
     row.getCell(3).value = metric.label;
     row.getCell(4).value = resolveMetricUnit(entries, metric);
-    row.getCell(5).value = metricIndex === 0 ? targetProduct : '';
+    row.getCell(5).value = metricIndex === 0 && unitMismatch ? 'عدم تطابق واحد' : '';
 
     entries.forEach((entry, periodIndex) => {
       const cell = row.getCell(6 + periodIndex);
       cell.value = entry.value;
       cell.numFmt = metric.numberFormat;
-      const note = buildCellNote(periods[periodIndex], entry, metric);
+      const note = buildCellNote(periods[periodIndex]);
       if (note) cell.note = note;
     });
 
@@ -689,9 +674,9 @@ function addCompanyBlock(sheet, company, startRow, blockIndex) {
     };
     cell.border = { bottom: borderBottom('medium') };
   }
-  const productCell = sheet.getCell(startRow, 5);
-  productCell.font = { name: 'Tahoma', size: 8, color: { argb: COLORS.teal } };
-  productCell.alignment = {
+  const unitStatusCell = sheet.getCell(startRow, 5);
+  unitStatusCell.font = { name: 'Tahoma', size: 8, color: { argb: statusHasIssue(status) ? COLORS.amber : COLORS.teal } };
+  unitStatusCell.alignment = {
     horizontal: 'center',
     vertical: 'middle',
     wrapText: true,
@@ -819,7 +804,7 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
   }
 
   sheet.mergeCells('A6:N6');
-  sheet.getCell('A6').value = 'چهار شاخص سبد غالب و نه ستون مقایسه‌ای نمایش داده می‌شوند؛ جزئیات منابع در شیت مخفی «ممیزی منابع» موجود است.';
+  sheet.getCell('A6').value = 'چهار شاخص مجموع کل و نه ستون مقایسه‌ای نمایش داده می‌شوند؛ جزئیات منابع در شیت مخفی «ممیزی منابع» موجود است.';
   sheet.getCell('A6').font = { name: 'Tahoma', size: 9, color: { argb: COLORS.gray700 } };
   sheet.getCell('A6').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.blueLight } };
   sheet.getCell('A6').alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, readingOrder: 'rtl' };
@@ -842,9 +827,9 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
     sheet.getCell(rowNumber, 1).value = metric.label;
     sheet.getCell(rowNumber, 3).value = metric.description;
     sheet.getCell(rowNumber, 9).value = metric.defaultUnit;
-    sheet.getCell(rowNumber, 11).value = metric.dominantProduct
-      ? 'سبد غالب ممکن است بین دوره‌ها تغییر کند؛ نام محصولات دقیق هر دوره در یادداشت سلول است.'
-      : '';
+    sheet.getCell(rowNumber, 11).value = metric.key === 'dominantRevenue'
+      ? 'مبلغ فروش دارای واحد پولی مشترک است.'
+      : 'در صورت تفاوت واحد محصولات، مجموع بدون تبدیل واحد محاسبه و نماد ناقص علامت‌گذاری می‌شود.';
     for (const column of [1, 3, 9, 11]) {
       const cell = sheet.getCell(rowNumber, column);
       cell.font = { name: 'Tahoma', size: 9, color: { argb: COLORS.gray900 } };
@@ -860,9 +845,9 @@ function createCoverSheet(workbook, industryGroups, metadata, industrySheetNames
     'ماه مبنا همیشه یک ماه عقب‌تر از ماه اجرای برنامه است؛ بنابراین هنگام اجرا در شهریور، گزارش مرداد بررسی می‌شود.',
     'بازه‌های میانگین برای هر نماد از ابتدای سال مالی همان شرکت ساخته می‌شوند؛ بنابراین نقطه شروع شرکت‌ها می‌تواند متفاوت باشد.',
     'رشد برابر است با «مقدار دوره جدید ÷ مقدار دوره مقایسه − ۱». اگر مقدار مبنا صفر یا یکی از دو مقدار ناموجود باشد، سلول رشد خالی می‌ماند.',
-    'محصولات بر اساس مبلغ فروش مرتب می‌شوند و کمترین تعداد محصولی که سهم تجمعی آن‌ها از ۵۰٪ بیشتر شود، سبد غالب دوره را می‌سازد؛ اگر فقط یک محصول وجود داشته باشد همان محصول انتخاب می‌شود.',
-    'نرخ فروش سبد غالب از تقسیم مبلغ فروشِ تبدیل‌شده به ریال بر مقدار فروش همان سبد محاسبه می‌شود و میانگین ساده نرخ محصولات نیست.',
-    'اگر واحد محصولات منتخب قابل جمع نباشد، مقدار تولید، مقدار فروش و نرخ سبد خالی می‌ماند؛ مبلغ فروش سبد همچنان نمایش داده می‌شود.',
+    'برای هر شاخص ابتدا مقدار ردیف جمع کدال استفاده می‌شود و اگر آن سلول خالی باشد، همه سلول‌های محصول همان ستون با هم جمع می‌شوند.',
+    'نرخ فروش کل از تقسیم مبلغ فروش کلِ تبدیل‌شده به ریال بر مقدار فروش کل محاسبه می‌شود.',
+    'اگر واحد محصولات یکسان نباشد، مجموع بدون تبدیل واحد محاسبه می‌شود و نماد با برچسب «عدم تطابق واحد» ناقص شناخته می‌شود.',
     'برای ردیابی هر عدد، یادداشت سلول و شیت «ممیزی منابع» را بررسی کنید. گزارش اصلاحی باید بر نسخه اولیه اولویت داشته باشد.',
   ];
   notes.forEach((note, index) => {
@@ -1190,7 +1175,7 @@ export function createReportWorkbook({ industryGroups = [], metadata = {} } = {}
   workbook.modified = new Date();
   workbook.subject = 'گزارش تحلیلی فعالیت ماهانه شرکت‌های تولیدی';
   workbook.title = textValue(metadata?.title, 'گزارش ماهانه شرکت‌های تولیدی');
-  workbook.description = 'گزارش ماهانه کدال با چهار شاخص سبد غالب و سه مقایسه رشد';
+  workbook.description = 'گزارش ماهانه کدال با چهار شاخص مجموع کل و سه مقایسه رشد';
   workbook.keywords = 'کدال, گزارش ماهانه, تولید, فروش, نرخ فروش, شرکت بورسی';
   workbook.calcProperties.fullCalcOnLoad = true;
   workbook.calcProperties.forceFullCalc = true;

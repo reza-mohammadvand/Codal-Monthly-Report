@@ -19,9 +19,9 @@
     <meta name="twitter:image" content="/og.png">
     <link rel="icon" type="image/png" href="/og.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
-    <link rel="stylesheet" href="/styles.css?v=14">
+    <link rel="stylesheet" href="/styles.css?v=15">
     <script src="/sorting.js?v=1" defer></script>
-    <script src="/app.js?v=26" defer></script>
+    <script src="/app.js?v=31" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
@@ -194,19 +194,19 @@
                     <div class="metric-visibility-options" role="group" aria-label="ردیف‌های قابل نمایش">
                       <label>
                         <input type="checkbox" data-metric-visibility="dominantProduction" checked>
-                        <span>مقدار تولید</span>
+                        <span>مجموع تولید</span>
                       </label>
                       <label>
                         <input type="checkbox" data-metric-visibility="dominantSales" checked>
-                        <span>مقدار فروش</span>
+                        <span>مجموع فروش</span>
                       </label>
                       <label>
                         <input type="checkbox" data-metric-visibility="dominantRevenue" checked>
-                        <span>مبلغ فروش</span>
+                        <span>مجموع مبلغ فروش</span>
                       </label>
                       <label>
                         <input type="checkbox" data-metric-visibility="dominantRate" checked>
-                        <span>نرخ فروش</span>
+                        <span>نرخ فروش کل</span>
                       </label>
                     </div>
                   </details>
@@ -219,10 +219,10 @@
                     <label class="select-control" for="sortMetric">
                       <span>ردیف</span>
                       <select id="sortMetric" aria-label="شاخص مبنای مرتب‌سازی">
-                        <option value="dominantProduction">مقدار تولید</option>
-                        <option value="dominantSales">مقدار فروش</option>
-                        <option value="dominantRevenue" selected>مبلغ فروش</option>
-                        <option value="dominantRate">نرخ فروش</option>
+                        <option value="dominantProduction">مجموع تولید</option>
+                        <option value="dominantSales">مجموع فروش</option>
+                        <option value="dominantRevenue" selected>مجموع مبلغ فروش</option>
+                        <option value="dominantRate">نرخ فروش کل</option>
                       </select>
                     </label>
                     <label class="select-control" for="sortColumn">
@@ -236,7 +236,7 @@
                   </div>
                 </fieldset>
                 <div class="toolbar-sort-actions">
-                  <div class="sort-direction-control" role="group" aria-label="جهت مرتب‌سازی">
+                  <div class="sort-direction-control" role="group" aria-label="روش و جهت مرتب‌سازی">
                     <div class="sort-direction-buttons">
                       <button id="sortAscendingButton" type="button" aria-pressed="false">
                         <span aria-hidden="true">↑</span>
@@ -245,6 +245,10 @@
                       <button id="sortDescendingButton" type="button" aria-pressed="false">
                         <span aria-hidden="true">↓</span>
                         نزولی
+                      </button>
+                      <button id="sortLatestUpdateButton" type="button" aria-pressed="false">
+                        <span aria-hidden="true">◷</span>
+                        تازه‌ترین بروزرسانی
                       </button>
                     </div>
                   </div>
@@ -288,7 +292,7 @@
         <button class="dialog-close" value="cancel" aria-label="بستن" type="submit">×</button>
         <span class="dialog-symbol dialog-symbol-warning" aria-hidden="true">!</span>
         <h2 id="incompleteDialogTitle">نمادهای دارای اطلاعات ناقص</h2>
-        <p id="incompleteDialogDescription">نمادهایی که دست‌کم یک مقدار خالی در جدول دارند.</p>
+        <p id="incompleteDialogDescription">نمادهایی که مقدار خالی یا عدم تطابق واحد دارند.</p>
         <div id="incompleteList" class="incomplete-list"></div>
         <div class="dialog-actions single-action">
           <button class="button button-primary" value="cancel" type="submit">بستن</button>

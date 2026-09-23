@@ -33,8 +33,15 @@ test("company summaries control animated, keyboard-accessible detail panels", as
   assert.match(app, /event\.key !== " "/);
   assert.match(app, /const faYear = new Intl\.NumberFormat\("fa-IR", \{[^}]*useGrouping: false,/s);
   assert.match(app, /faYear\.format\(year\)/);
-  const dominantBasketLabels = (app.match(/سبد غالب:/g) ?? []).length;
-  assert.ok(dominantBasketLabels >= 1 && dominantBasketLabels <= 2);
+  assert.doesNotMatch(app, /سبد غالب:/);
+  assert.match(app, /label: "مجموع تولید"/);
+  assert.match(app, /label: "نرخ فروش کل"/);
+  assert.match(app, /function hasUnitMismatch\(company\)/);
+  assert.match(app, /badge-unit-mismatch/);
+  assert.match(app, /incomplete-reason-tag/);
+  assert.match(app, /const unitMismatchCount = companies\.filter/);
+  assert.match(app, /const missingCellCompanyCount = companies\.filter/);
+  assert.match(app, /const missingCellCount = companies\.reduce/);
   assert.doesNotMatch(app, /metric\.dominant \? period\?\.dominantProductName/);
 });
 
@@ -64,7 +71,7 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
   assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
   assert.match(html, /sorting\.js\?v=1" defer/);
-  assert.match(html, /app\.js\?v=26" defer/);
+  assert.match(html, /app\.js\?v=30" defer/);
   assert.match(html, /id="dashboardActionsForm"/);
   assert.match(html, /formaction="\/actions\/export"/);
   assert.match(html, /formaction="\/actions\/update\?scope=selected"/);

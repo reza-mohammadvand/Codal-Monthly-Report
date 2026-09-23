@@ -11,6 +11,7 @@ import {
 import { DiskCache } from "./cache.js";
 import { requestJson, requestText } from "./http.js";
 import {
+  addJalaliMonths,
   buildSymbolPeriodMetrics,
   calculateGrowth,
   getReportPeriods,
@@ -25,7 +26,7 @@ const METRIC_MAP = Object.freeze({
   dominantRate: "dominantProductRate",
 });
 
-export const CALCULATION_VERSION = "dominant-basket-v3";
+export const CALCULATION_VERSION = "company-totals-v3";
 
 export const DEFAULT_PILOT_SYMBOLS = Object.freeze(["فولاد", "فملی", "شپنا", "کگل"]);
 
@@ -56,6 +57,38 @@ export function formatCompanySymbolForConsole(symbol, ordinal = null) {
 
 function monthKey(value) {
   return `${value.year}/${String(value.month).padStart(2, "0")}`;
+}
+
+function monthOrdinal(value) {
+  return Number(value.year) * 12 + Number(value.month) - 1;
+}
+
+function normalizedStoredReport(report) {
+  const titlePeriod = extractReportPeriod(report);
+  const storedYear = Number(report?.year);
+  const storedMonth = Number(report?.month);
+  const period = titlePeriod ?? (
+    Number.isInteger(storedYear)
+      && Number.isInteger(storedMonth)
+      && storedMonth >= 1
+      && storedMonth <= 12
+      ? { year: storedYear, month: storedMonth }
+      : null
+  );
+  if (!period) return null;
+  if (storedYear === period.year && storedMonth === period.month) return report;
+  return { ...report, year: period.year, month: period.month };
+}
+
+function latestAvailableReportMonth(reports, existingCompany, maximumMonth) {
+  const maximumOrdinal = monthOrdinal(maximumMonth);
+  const candidates = [
+    ...(reports ?? []).map(extractReportPeriod),
+    ...(Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
+      .map(normalizedStoredReport)
+      .map((report) => report && ({ year: report.year, month: report.month })),
+  ].filter((period) => period && monthOrdinal(period) <= maximumOrdinal);
+  return candidates.sort((left, right) => monthOrdinal(right) - monthOrdinal(left))[0] ?? null;
 }
 
 function parseAsOf(value) {
@@ -141,8 +174,10 @@ function normalizeMonthlyReport(report, parsed) {
       production: monthly.totals.production,
       sales: monthly.totals.salesQuantity,
       revenue: monthly.totals.revenue,
+      rate: monthly.totals.rate,
       weightedRate: monthly.totals.weightedRate,
       unit: monthly.totals.unit || null,
+      units: monthly.totals.units ?? [],
       unitsCompatible: monthly.totals.compatibleUnits,
     },
     products: monthly.products.map((product) => ({
@@ -153,15 +188,6 @@ function normalizeMonthlyReport(report, parsed) {
       revenue: product.revenue,
       rate: product.rate,
     })),
-    dominantProduct: monthly.dominantProduct
-      ? {
-          name: monthly.dominantProduct.name,
-          unit: monthly.dominantProduct.unit || null,
-          sales: monthly.dominantProduct.salesQuantity,
-          revenue: monthly.dominantProduct.revenue,
-          rate: monthly.dominantProduct.rate,
-        }
-      : null,
     source: {
       tracingNo: report.TracingNo,
       title: report.Title,
@@ -182,15 +208,13 @@ function mappedMetrics(period, allowPartial) {
 }
 
 function normalizePeriodForExcel(period, allowPartial) {
+  const unitMismatch = period.meta.reportCount > 0 && period.totals.unitsCompatible === false;
   return {
     metrics: mappedMetrics(period, allowPartial),
     unit: period.totals.unit,
+    units: period.totals.units ?? [],
     unitsCompatible: period.totals.unitsCompatible,
-    dominantProductName: period.dominantProduct?.name ?? null,
-    dominantProductNames: period.dominantProduct?.names ?? [],
-    dominantProductUnit: period.dominantProduct?.unit ?? null,
-    dominantProductRateUnit: period.dominantProduct?.rateUnit ?? null,
-    dominantProductRevenueShare: period.dominantProduct?.revenueShare ?? null,
+    unitMismatch,
     complete: period.meta.complete,
     reportCount: period.meta.reportCount,
     requestedMonthCount: period.meta.requestedMonthCount,
@@ -430,7 +454,15 @@ async function resolveCompanyFiscalContext({
     throw new Error(`No usable fiscal-year end date was returned by Codal for ${company.symbol}.`);
   }
 
-  const definitions = getReportPeriods(executionMonth, { fiscalYearEndMonth });
+  const scheduledDefinitions = getReportPeriods(executionMonth, { fiscalYearEndMonth });
+  const effectiveTargetMonth = latestAvailableReportMonth(
+    recentReports,
+    existingCompany,
+    scheduledDefinitions.targetMonth,
+  ) ?? scheduledDefinitions.targetMonth;
+  const definitions = getReportPeriods(addJalaliMonths(effectiveTargetMonth, 1), {
+    fiscalYearEndMonth,
+  });
   const months = requiredMonths(definitions);
   return {
     financialYears,
@@ -438,6 +470,9 @@ async function resolveCompanyFiscalContext({
     fiscalYearStartMonth: definitions.fiscalYearStartMonth,
     fiscalYearSource,
     definitions,
+    scheduledTargetMonth: scheduledDefinitions.targetMonth,
+    effectiveTargetMonth,
+    targetFallbackApplied: monthKey(effectiveTargetMonth) !== monthKey(scheduledDefinitions.targetMonth),
     months,
     reports: recentReports,
     requiredFromMonth: months[0],
@@ -471,7 +506,8 @@ function checkPreloadedReportsForNewIdentity(existingCompany, reports) {
 
 function latestStoredReportMonth(existingCompany) {
   return (Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
-    .filter((report) => Number.isInteger(Number(report?.year)) && Number.isInteger(Number(report?.month)))
+    .map(normalizedStoredReport)
+    .filter(Boolean)
     .sort((left, right) => Number(right.year) - Number(left.year) || Number(right.month) - Number(left.month))[0]
     ?? null;
 }
@@ -506,6 +542,9 @@ async function processCompany({
 }) {
   const {
     definitions,
+    scheduledTargetMonth,
+    effectiveTargetMonth,
+    targetFallbackApplied,
     financialYears,
     fiscalYearEndMonth,
     fiscalYearStartMonth,
@@ -533,10 +572,11 @@ async function processCompany({
   for (const candidates of reportsByMonth.values()) {
     candidates.sort((left, right) => compareReportPriority(right, left));
   }
-  const storedReportsByMonth = new Map(
-    (Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : [])
-      .map((report) => [monthKey(report), report]),
-  );
+  const storedReportsByMonth = new Map();
+  for (const stored of Array.isArray(existingCompany?.monthlyReports) ? existingCompany.monthlyReports : []) {
+    const report = normalizedStoredReport(stored);
+    if (report) storedReportsByMonth.set(monthKey(report), report);
+  }
   const monthlyReports = [];
   const errors = [];
   let downloadedReportCount = 0;
@@ -596,16 +636,34 @@ async function processCompany({
   const missingReportCount = parsedMonths.filter((item) => item.kind === "missing").length;
   const parseFailureCount = parsedMonths.filter((item) => item.kind === "parse").length;
   const requiredReportCount = months.length;
-  const status = classifyCoverage({
+  const coverageStatus = classifyCoverage({
     requiredReportCount,
     foundReportCount,
     parsedReportCount,
   });
+  const unitMismatch = monthlyReports.some((report) => report.totals?.unitsCompatible === false)
+    || Object.values(calculated.periods).some((period) => (
+      period.meta.reportCount > 0 && period.totals.unitsCompatible === false
+    ));
+  const unitMismatchUnits = [...new Set(monthlyReports.flatMap((report) => {
+    const totalUnits = Array.isArray(report.totals?.units) ? report.totals.units : [];
+    const productUnits = Array.isArray(report.products)
+      ? report.products.map((product) => product?.unit)
+      : [];
+    return [report.totals?.unit, ...totalUnits, ...productUnits];
+  }).filter(Boolean))];
+  if (unitMismatch) {
+    errors.push("عدم تطابق واحد: مجموع ردیف‌ها بدون تبدیل واحد محاسبه شده است.");
+  }
+  const status = unitMismatch && parsedReportCount > 0 ? "ناقص" : coverageStatus;
   const calculationChanged = existingCompany?.calculationVersion !== CALCULATION_VERSION;
   return {
     ...company,
     ...excelData,
     definitions,
+    scheduledTargetMonth,
+    effectiveTargetMonth,
+    targetFallbackApplied,
     financialYears,
     fiscalYearEndMonth,
     fiscalYearStartMonth,
@@ -613,6 +671,8 @@ async function processCompany({
     requiredFromMonth,
     requiredToMonth,
     status,
+    unitMismatch,
+    unitMismatchUnits,
     errors,
     sources: monthlyReports.map((report) => ({
       year: report.year,
@@ -781,7 +841,8 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     let context = null;
     const existingCompany = existingBySymbol.get(normalizeCodalText(company.symbol)) ?? null;
     const forceCompanyReparse = options.forceReparseReports === true
-      || forceReparseSymbolSet.has(normalizeCodalText(company.symbol));
+      || forceReparseSymbolSet.has(normalizeCodalText(company.symbol))
+      || (existingCompany && existingCompany.calculationVersion !== CALCULATION_VERSION);
     const globallyDiscoveredReports = recentReportsBySymbol?.get(
       normalizeCodalText(company.symbol),
     ) ?? null;
@@ -885,11 +946,21 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
       };
     }
     const [industryGroup] = buildIndustryGroups([result], industries);
+    const companyMetadata = result.definitions
+      ? {
+          ...metadata,
+          executionMonth: result.definitions.executionMonth,
+          targetMonth: result.definitions.targetMonth,
+          definitions: result.definitions,
+          scheduledTargetMonth: definitions.targetMonth,
+          targetFallbackApplied: result.targetFallbackApplied === true,
+        }
+      : metadata;
     await emitProgress(options.onCompanyResult, {
       type: "company-result",
       company: result,
       industryGroup,
-      metadata,
+      metadata: companyMetadata,
     });
     completed += 1;
     const progressEvent = {
@@ -931,6 +1002,27 @@ export async function collectMonthlyReportData(options = {}, dependencies = {}) 
     }
     return result;
   });
+
+  const knownCompanies = new Map(existingBySymbol);
+  for (const company of processed) {
+    knownCompanies.set(normalizeCodalText(company.symbol), company);
+  }
+  const latestKnownTarget = latestAvailableReportMonth(
+    [],
+    {
+      monthlyReports: [...knownCompanies.values()].flatMap((company) => (
+        Array.isArray(company?.monthlyReports) ? company.monthlyReports : []
+      )),
+    },
+    definitions.targetMonth,
+  );
+  if (latestKnownTarget) {
+    metadata.scheduledTargetMonth = definitions.targetMonth;
+    metadata.targetMonth = latestKnownTarget;
+    metadata.executionMonth = addJalaliMonths(latestKnownTarget, 1);
+    metadata.definitions = getReportPeriods(metadata.executionMonth);
+    metadata.targetFallbackApplied = monthKey(latestKnownTarget) !== monthKey(definitions.targetMonth);
+  }
 
   const industryGroups = buildIndustryGroups(processed, industries);
   const statusSummary = summarizeCompanyStatuses(processed);

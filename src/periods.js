@@ -13,10 +13,9 @@
  *     unit: String | null,
  *     unitsCompatible: Boolean
  *   },
- *   products: [ // recommended; needed for exact period-level dominant basket
+ *   products: [ // used when Codal omits a reported total
  *     { name, unit, production, sales, revenue, rate }
  *   ],
- *   dominantProduct: { name, unit, sales, revenue, rate } // fallback only
  * }
  */
 
@@ -290,31 +289,6 @@ function normalizedUnit(value) {
   return unit || null;
 }
 
-function quantityUnitScale(value) {
-  const unit = String(value ?? '')
-    .replace(/[\u200c\u200e\u200f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (/^(?:هزار|thousand)(?:\s|$)/i.test(unit)) return 1_000;
-  if (/^(?:میلیون|million)(?:\s|$)/i.test(unit)) return 1_000_000;
-  if (/^(?:میلیارد|billion)(?:\s|$)/i.test(unit)) return 1_000_000_000;
-  return 1;
-}
-
-function baseQuantityUnit(value) {
-  const unit = normalizedUnit(value);
-  if (!unit) return null;
-  const base = unit
-    .replace(/^(?:هزار|میلیون|میلیارد|thousand|million|billion)\s*/i, '')
-    .trim();
-  return base || unit;
-}
-
-function reportRevenueScale(report, fallback) {
-  const scale = finiteNumber(report?.revenueScale);
-  return scale !== null && scale > 0 ? scale : fallback;
-}
-
 function productEntries(report) {
   if (Array.isArray(report.products) && report.products.length) {
     return report.products;
@@ -322,124 +296,32 @@ function productEntries(report) {
   return report.dominantProduct ? [report.dominantProduct] : [];
 }
 
-function aggregateDominantProduct(reports, average, revenueScale) {
-  const products = new Map();
+function reportRevenueScale(report, fallback) {
+  const scale = finiteNumber(report?.revenueScale);
+  return scale !== null && scale > 0 ? scale : fallback;
+}
 
-  for (const report of reports) {
-    const scale = reportRevenueScale(report, revenueScale);
-    for (const product of productEntries(report)) {
-      const name = String(product?.name ?? '').trim();
-      if (!name) continue;
-      const unit = normalizedUnit(product.unit);
-      const key = `${name}\u0000${unit ?? ''}`;
-      const current = products.get(key) ?? {
-        name,
-        unit,
-        production: 0,
-        hasProduction: false,
-        sales: 0,
-        hasSales: false,
-        revenue: 0,
-        hasRevenue: false,
-        revenueInBaseUnit: 0,
-        firstSeen: products.size,
-      };
-      const production = finiteNumber(product.production);
-      const sales = finiteNumber(product.sales);
-      const revenue = finiteNumber(product.revenue);
-      if (production !== null) {
-        current.production += production;
-        current.hasProduction = true;
-      }
-      if (sales !== null) {
-        current.sales += sales;
-        current.hasSales = true;
-      }
-      if (revenue !== null) {
-        current.revenue += revenue;
-        current.revenueInBaseUnit += revenue * scale;
-        current.hasRevenue = true;
-      }
-      products.set(key, current);
-    }
-  }
+function reportTotal(report, metric) {
+  const totals = report?.totals ?? {};
+  const totalKey = metric === 'sales' ? 'sales' : metric;
+  const explicit = finiteNumber(totals[totalKey]);
+  if (explicit !== null) return explicit;
 
-  const candidates = [...products.values()].filter(
-    (product) => product.hasRevenue && product.revenueInBaseUnit > 0,
-  );
-  candidates.sort((left, right) => {
-    const revenueDifference = right.revenueInBaseUnit - left.revenueInBaseUnit;
-    return revenueDifference || left.firstSeen - right.firstSeen;
-  });
-  if (!candidates.length) return null;
+  const productKey = metric === 'sales' ? 'sales' : metric;
+  const productTotal = numericSum(productEntries(report).map((product) => product?.[productKey]));
+  if (productTotal !== null) return productTotal;
 
-  const totalRevenueInBaseUnit = candidates.reduce(
-    (sum, product) => sum + product.revenueInBaseUnit,
-    0,
-  );
-  const selected = [];
-  let selectedRevenueInBaseUnit = 0;
-  for (const product of candidates) {
-    selected.push(product);
-    selectedRevenueInBaseUnit += product.revenueInBaseUnit;
-    // The business rule is strictly greater than 50%; exactly 50% requires
-    // adding the next product.
-    if (selectedRevenueInBaseUnit > totalRevenueInBaseUnit / 2) break;
-  }
-
-  const units = new Set(selected.map((product) => product.unit).filter(Boolean));
-  const unitsCompatible = units.size <= 1;
-  const divisor = average ? reports.length || 1 : 1;
-  const productionTotal = unitsCompatible && selected.every((product) => product.hasProduction)
-    ? selected.reduce((sum, product) => sum + product.production, 0)
-    : null;
-  const salesTotal = unitsCompatible && selected.every((product) => product.hasSales)
-    ? selected.reduce((sum, product) => sum + product.sales, 0)
-    : null;
-  const revenueTotal = selected.reduce((sum, product) => sum + product.revenue, 0);
-  const selectedSalesInBaseUnit = salesTotal === null
-    ? null
-    : selected.reduce(
-      (sum, product) => sum + product.sales * quantityUnitScale(product.unit),
-      0,
-    );
-  const rate = selectedSalesInBaseUnit !== null && selectedSalesInBaseUnit !== 0
-    ? selectedRevenueInBaseUnit / selectedSalesInBaseUnit
-    : null;
-  const names = selected.map((product) => product.name);
-
-  return {
-    name: names.join('، '),
-    names,
-    products: selected.map((product) => ({
-      name: product.name,
-      unit: product.unit,
-      revenue: average ? product.revenue / divisor : product.revenue,
-      revenueShare: product.revenueInBaseUnit / totalRevenueInBaseUnit,
-    })),
-    unit: unitsCompatible ? [...units][0] ?? null : null,
-    rateUnit: unitsCompatible ? baseQuantityUnit([...units][0] ?? null) : null,
-    unitsCompatible,
-    production: productionTotal === null ? null : productionTotal / divisor,
-    sales: salesTotal === null ? null : salesTotal / divisor,
-    revenue: revenueTotal / divisor,
-    rate,
-    revenueShare: selectedRevenueInBaseUnit / totalRevenueInBaseUnit,
-    periodProductionTotal: productionTotal,
-    periodSalesTotal: salesTotal,
-    periodSalesInBaseUnit: selectedSalesInBaseUnit,
-    periodRevenueTotal: revenueTotal,
-  };
+  return null;
 }
 
 /**
  * Aggregate normalized reports for the requested Jalali months.
  *
  * For averages, quantity/revenue metrics are arithmetic monthly averages.
- * Rates are never averaged arithmetically: they are calculated from period
- * revenue divided by period sales quantity. The dominant basket is the
- * smallest revenue-sorted set of products whose cumulative sales amount is
- * strictly greater than 50% of product revenue for the whole period.
+ * Production, sales quantity, and revenue use the reported company total when
+ * available and otherwise sum all product cells. The sales rate is always the
+ * total revenue in rials divided by total sales quantity. Different quantity
+ * units do not suppress the result; unitsCompatible records the mismatch.
  */
 export function aggregatePeriod(monthlyReports, months, options = {}) {
   if (!Array.isArray(monthlyReports)) throw new TypeError('monthlyReports must be an array');
@@ -450,7 +332,6 @@ export function aggregatePeriod(monthlyReports, months, options = {}) {
   const average = options.average ?? months.length > 1;
   const revenueScale = finiteNumber(options.revenueScale) ?? DEFAULT_REVENUE_SCALE;
   if (revenueScale <= 0) throw new RangeError('revenueScale must be positive');
-
   // Later entries replace earlier ones. The fetch/normalization layer can put
   // a corrected disclosure after its original report.
   const reportsByMonth = new Map();
@@ -468,52 +349,40 @@ export function aggregatePeriod(monthlyReports, months, options = {}) {
     .map((month) => reportsByMonth.get(monthKey(month)))
     .filter(Boolean);
 
-  const units = new Set(
-    reports.map((report) => normalizedUnit(report.totals?.unit)).filter(Boolean),
-  );
+  const units = new Set(reports.flatMap((report) => {
+    const reportedUnits = Array.isArray(report.totals?.units) ? report.totals.units : [];
+    const productUnits = productEntries(report).map((product) => product?.unit);
+    return [report.totals?.unit, ...reportedUnits, ...productUnits]
+      .map(normalizedUnit)
+      .filter(Boolean);
+  }));
   const unitsCompatible = reports.length > 0
     && reports.every((report) => report.totals?.unitsCompatible !== false)
     && units.size <= 1;
 
-  const production = unitsCompatible
-    ? aggregateNumber(reports.map((report) => report.totals?.production), average)
-    : null;
-  const sales = unitsCompatible
-    ? aggregateNumber(reports.map((report) => report.totals?.sales), average)
-    : null;
-  const revenue = aggregateNumber(
-    reports.map((report) => report.totals?.revenue),
-    average,
-  );
-
-  const totalSalesForRate = unitsCompatible
-    ? numericSum(reports.map((report) => report.totals?.sales))
-    : null;
-  const revenueInBaseUnit = reports.reduce((sum, report) => {
-    const reportRevenue = finiteNumber(report.totals?.revenue);
-    return reportRevenue === null
-      ? sum
-      : sum + reportRevenue * reportRevenueScale(report, revenueScale);
-  }, 0);
-  const hasRevenue = reports.some(
-    (report) => finiteNumber(report.totals?.revenue) !== null,
-  );
-  const weightedRate = totalSalesForRate !== null
+  const production = aggregateNumber(reports.map((report) => reportTotal(report, 'production')), average);
+  const sales = aggregateNumber(reports.map((report) => reportTotal(report, 'sales')), average);
+  const revenue = aggregateNumber(reports.map((report) => reportTotal(report, 'revenue')), average);
+  const totalSalesForRate = numericSum(reports.map((report) => reportTotal(report, 'sales')));
+  const revenueValuesForRate = reports
+    .map((report) => {
+      const reportRevenue = reportTotal(report, 'revenue');
+      return reportRevenue === null
+        ? null
+        : reportRevenue * reportRevenueScale(report, revenueScale);
+    });
+  const totalRevenueForRate = numericSum(revenueValuesForRate);
+  const rate = totalRevenueForRate !== null
+    && totalSalesForRate !== null
     && totalSalesForRate !== 0
-    && hasRevenue
-    ? revenueInBaseUnit / totalSalesForRate
+    ? totalRevenueForRate / totalSalesForRate
     : null;
 
-  const dominantProduct = aggregateDominantProduct(
-    reports,
-    Boolean(average),
-    revenueScale,
-  );
   const metrics = {
-    dominantProductProduction: dominantProduct?.production ?? null,
-    dominantProductSales: dominantProduct?.sales ?? null,
-    dominantProductRevenue: dominantProduct?.revenue ?? null,
-    dominantProductRate: dominantProduct?.rate ?? null,
+    dominantProductProduction: production,
+    dominantProductSales: sales,
+    dominantProductRevenue: revenue,
+    dominantProductRate: rate,
   };
 
   return {
@@ -522,11 +391,12 @@ export function aggregatePeriod(monthlyReports, months, options = {}) {
       production,
       sales,
       revenue,
-      weightedRate,
+      rate,
+      weightedRate: rate,
       unit: unitsCompatible ? [...units][0] ?? null : null,
+      units: [...units],
       unitsCompatible,
     },
-    dominantProduct,
     meta: {
       average: Boolean(average),
       requestedMonthCount: requestedMonths.length,

@@ -1094,15 +1094,10 @@ input[type="checkbox"] {
   border-color: rgba(255, 113, 133, 0.18);
 }
 
-.badge-dominant {
-  gap: 4px;
-  color: #f7d48a;
-  background: rgba(244, 189, 98, 0.09);
-  border-color: rgba(244, 189, 98, 0.2);
-}
-
-.badge-dominant span {
+.badge-unit-mismatch {
   color: var(--amber);
+  background: rgba(244, 189, 98, 0.09);
+  border: 1px solid rgba(244, 189, 98, 0.22);
   font-weight: 700;
 }
 
@@ -1628,6 +1623,25 @@ input[type="checkbox"] {
 .incomplete-missing-count {
   color: var(--amber);
   font-size: 10px;
+  white-space: nowrap;
+}
+
+.incomplete-reasons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.incomplete-reason-tag {
+  padding: 3px 7px;
+  color: var(--amber);
+  background: rgba(244, 189, 98, 0.09);
+  border: 1px solid rgba(244, 189, 98, 0.22);
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
   white-space: nowrap;
 }
 

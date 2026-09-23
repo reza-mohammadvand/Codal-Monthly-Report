@@ -30,7 +30,8 @@ test('Excel report serializes with a compact layout and auditable growth formula
       companies: [{
         symbol: 'نماد',
         name: 'شرکت آزمایشی',
-        status: 'کامل',
+        status: 'ناقص',
+        unitMismatch: true,
         periods: {
           priorTarget: period(1),
           priorYtd: period(2),
@@ -96,9 +97,9 @@ test('Excel report serializes with a compact layout and auditable growth formula
   assert.equal(sheet.getCell('A5').value, 'نماد');
   assert.equal(sheet.getCell('A8').master.address, 'A5');
   assert.equal(sheet.getCell('B8').master.address, 'B5');
-  assert.equal(sheet.getCell('E5').value, 'محصول الف');
+  assert.equal(sheet.getCell('E5').value, 'عدم تطابق واحد');
   assert.equal(sheet.getCell('E8').master.address, 'E5');
-  assert.equal(sheet.getCell('C8').value, 'نرخ فروش سبد غالب');
+  assert.equal(sheet.getCell('C8').value, 'نرخ فروش کل');
   assert.equal(sheet.getCell('G4').value, 'میانگین سال مالی تا\nمرداد 1404');
   assert.equal(sheet.getCell('H4').value, 'میانگین ۱۲ماهه\nسال مالی قبل');
   assert.equal(sheet.getCell('K4').value, 'میانگین سال مالی تا\nمرداد 1405');

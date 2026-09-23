@@ -336,12 +336,16 @@ export function resolveFiscalYearEndMonth(values) {
 
 export function extractReportPeriod(report) {
   if (typeof report === 'string') return extractJalaliDate(report);
+  // A correction can be published in a later month while still belonging to
+  // the period explicitly named in its title. Treat that title as the source
+  // of truth before considering auxiliary API date fields.
   const candidates = [
+    report?.Title,
+    report?.title,
+    report?.source?.title,
     report?.PeriodEndToDate,
     report?.PeriodEndDate,
     report?.EndDate,
-    report?.Title,
-    report?.title,
   ];
   for (const candidate of candidates) {
     const parsed = extractJalaliDate(candidate);
@@ -629,8 +633,8 @@ function aggregateEntries(entries, revenueMultiplier, reportedTotals = null) {
   const products = [...grouped.values()].map((parts) => {
     const units = unique(parts.map((part) => part.unit).filter(Boolean));
     const compatibleUnits = units.length <= 1;
-    const production = compatibleUnits ? sumPresent(parts.map((part) => part.production)) : null;
-    const salesQuantity = compatibleUnits ? sumPresent(parts.map((part) => part.salesQuantity)) : null;
+    const production = sumPresent(parts.map((part) => part.production));
+    const salesQuantity = sumPresent(parts.map((part) => part.salesQuantity));
     const revenue = sumPresent(parts.map((part) => part.revenue));
     const calculatedRate = compatibleUnits && revenue != null && salesQuantity
       ? (revenue * revenueMultiplier) / salesQuantity
@@ -651,34 +655,41 @@ function aggregateEntries(entries, revenueMultiplier, reportedTotals = null) {
       sections: unique(parts.map((part) => part.section)),
       entries: parts,
     };
-  }).sort((left, right) => (right.revenue ?? -Infinity) - (left.revenue ?? -Infinity));
+  });
 
   const units = unique(entries.map((entry) => entry.unit).filter(Boolean));
   const compatibleUnits = units.length <= 1;
-  const production = compatibleUnits ? sumPresent(entries.map((entry) => entry.production)) : null;
-  const salesQuantity = compatibleUnits ? sumPresent(entries.map((entry) => entry.salesQuantity)) : null;
+  const calculatedProduction = sumPresent(entries.map((entry) => entry.production));
+  const calculatedSalesQuantity = sumPresent(entries.map((entry) => entry.salesQuantity));
   const calculatedRevenue = sumPresent(entries.map((entry) => entry.revenue));
-  // The final Codal "جمع" row is the authoritative net sales amount and can
-  // include signed discounts/adjustments that have no quantity column.
+  // Prefer every populated value in Codal's final "جمع" row. When Codal omits
+  // a total, fall back to the sum of the corresponding product cells. Quantity
+  // values are deliberately summed even when their units differ; the mismatch
+  // is retained as metadata so consumers can flag the company as incomplete.
+  const production = reportedTotals?.production ?? calculatedProduction;
+  const salesQuantity = reportedTotals?.salesQuantity ?? calculatedSalesQuantity;
   const revenue = reportedTotals?.revenue ?? calculatedRevenue;
-  const weightedRate = compatibleUnits && revenue != null && salesQuantity
+  const calculatedRate = revenue != null && salesQuantity != null && salesQuantity !== 0
     ? (revenue * revenueMultiplier) / salesQuantity
     : null;
+  const rate = calculatedRate;
 
   return {
     entries,
     adjustments: entries.filter((entry) => entry.isAdjustment),
     products,
-    dominantProduct: products.find((product) => product.revenue != null && product.revenue > 0) ?? null,
     reportedTotals,
+    calculatedProduction,
+    calculatedSalesQuantity,
+    calculatedRate,
     calculatedRevenue,
     totals: {
       production,
       salesQuantity,
       sales: salesQuantity,
       revenue,
-      weightedRate,
-      rate: weightedRate,
+      rate,
+      weightedRate: rate,
       unit: compatibleUnits ? (units[0] ?? '') : null,
       units,
       compatibleUnits,
@@ -736,7 +747,7 @@ export function parseProductionSalesReport(html) {
   const warnings = [];
   if (!monthly) warnings.push('Monthly period columns were not found.');
   if (monthly && !monthly.totals.compatibleUnits) {
-    warnings.push('Production/sales totals and weighted rate are unavailable because product units differ.');
+    warnings.push('Product units differ; raw column totals were calculated without unit conversion.');
   }
 
   return {

@@ -3,7 +3,7 @@
 Generate a multi-sheet Excel workbook from the public monthly activity reports
 published on [Codal](https://www.codal.ir/). The project covers manufacturing
 companies listed on the Tehran Stock Exchange and Iran Fara Bourse, groups them
-by industry, and creates a four-row dominant-basket block for every symbol.
+by industry, and creates a four-row company-total block for every symbol.
 
 ## Features
 
@@ -62,16 +62,17 @@ provide an explicit Jalali execution date with `--as-of`.
 
 Each company is represented by four rows:
 
-1. Production quantity of the dominant product basket
-2. Sales quantity of the dominant product basket
-3. Sales revenue of the dominant product basket in million rials
-4. Weighted sales rate of the dominant product basket
+1. Total production quantity
+2. Total sales quantity
+3. Total sales revenue in million rials
+4. Total weighted sales rate
 
-Products are sorted by sales revenue. The dominant basket is the smallest set
-from the top of that ranking whose cumulative share is strictly greater than
-50% of product revenue for the selected period. If only one product exists, it
-is the basket. The basket rate is its revenue in rials divided by its sales
-quantity; it is not a simple average of product rates.
+For production, sales quantity, and sales revenue, the final Codal total cell is
+preferred when it is populated. If that cell is empty, the program sums every
+product cell in the corresponding column. The sales rate is calculated as total
+sales revenue in rials divided by total sales quantity. Raw quantities are summed
+even when product units differ; no unit conversion is applied in that case, and
+the company is marked incomplete with a unit-mismatch tag.
 
 ## Requirements
 
@@ -221,9 +222,8 @@ target Jalali year and month in its filename.
 
 ## Data Quality Rules
 
-- Basket production and sales quantities are aggregated only when the selected
-  products have compatible units. Otherwise, those quantities and the basket
-  rate are unavailable while basket revenue remains available.
+- Product rows are totaled even when their units differ. Such companies are
+  classified as incomplete and receive an explicit unit-mismatch reason.
 - Incomplete multi-month averages are blank by default. Use `--allow-partial`
   only when calculating from the available months is acceptable.
 - If Codal's fiscal-year endpoint is empty, the program recovers the year-end
@@ -233,10 +233,10 @@ target Jalali year and month in its filename.
   structured data embedded in the main Codal disclosure page.
 - Growth is unavailable when either value is missing or the comparison value is
   zero.
-- Sales returns and discounts are included in company net revenue but cannot be
-  selected for the dominant basket.
-- The final Codal total row is treated as the authoritative company sales
-  revenue.
+- Sales returns and discounts remain included in company net revenue.
+- For production, sales quantity, and revenue, every populated cell in Codal's
+  final total row is authoritative; a missing total falls back to product cells.
+- Sales rate is always calculated from total revenue divided by total quantity.
 - Downloaded responses are stored in `.cache/codal`; generated workbooks are
   stored in `outputs/`. Both directories are excluded from Git.
 - No username or password is stored by this project, and the legacy workbook in
@@ -252,7 +252,7 @@ npm test
 
 The tests cover Jalali month arithmetic, shifted and company-specific fiscal
 periods, Codal fiscal-year lookup, HTML table parsing, corrections, sales
-returns and discounts, incompatible units, dominant-basket selection and rate,
+returns and discounts, incompatible-unit tagging, company-total fallbacks,
 missing data, month-over-month and year-over-year growth, Excel
 serialization, SQLite persistence, selective refresh/export behavior, and the
 web HTTP routes.

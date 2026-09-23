@@ -14,11 +14,14 @@ function report(year, month, values = {}) {
   return {
     year,
     month,
+    revenueScale: values.revenueScale ?? 1_000_000,
     totals: {
       production: values.production ?? 100,
       sales: values.sales ?? 10,
       revenue: values.revenue ?? 100,
+      rate: values.rate ?? 10,
       unit: values.unit ?? 'تن',
+      units: values.units ?? [values.unit ?? 'تن'],
       unitsCompatible: values.unitsCompatible ?? true,
     },
     products: values.products ?? [
@@ -28,6 +31,7 @@ function report(year, month, values = {}) {
         production: values.production ?? 100,
         sales: values.sales ?? 10,
         revenue: values.revenue ?? 100,
+        rate: values.rate ?? 10,
       },
     ],
   };
@@ -160,25 +164,19 @@ test('fiscal year end month must be a valid Jalali month', () => {
   );
 });
 
-test('period aggregation averages the dominant basket and weights its rate by sales', () => {
+test('period aggregation averages totals and derives the weighted sales rate', () => {
   const reports = [
     report(1405, 1, {
       production: 100,
       sales: 10,
       revenue: 200,
-      products: [
-        { name: 'A', unit: 'تن', production: 8, sales: 5, revenue: 100 },
-        { name: 'B', unit: 'تن', production: 12, sales: 10, revenue: 100 },
-      ],
+      rate: 30,
     }),
     report(1405, 2, {
       production: 300,
       sales: 30,
       revenue: 900,
-      products: [
-        { name: 'A', unit: 'تن', production: 16, sales: 10, revenue: 500 },
-        { name: 'B', unit: 'تن', production: 24, sales: 20, revenue: 400 },
-      ],
+      rate: 50,
     }),
   ];
 
@@ -188,119 +186,125 @@ test('period aggregation averages the dominant basket and weights its rate by sa
     { average: true },
   );
 
-  assert.equal(result.dominantProduct.name, 'A');
-  assert.equal(result.metrics.dominantProductProduction, 12);
-  assert.equal(result.metrics.dominantProductSales, 7.5);
-  assert.equal(result.metrics.dominantProductRevenue, 300);
-  assert.equal(result.metrics.dominantProductRate, 40_000_000);
-  assert.ok(result.dominantProduct.revenueShare > 0.5);
+  assert.equal(result.metrics.dominantProductProduction, 200);
+  assert.equal(result.metrics.dominantProductSales, 20);
+  assert.equal(result.metrics.dominantProductRevenue, 550);
+  assert.equal(result.metrics.dominantProductRate, 1_100_000_000 / 40);
   assert.equal(result.meta.complete, true);
 });
 
-test('period dominant product uses cumulative revenue, not monthly winner frequency', () => {
-  const reports = [
-    report(1405, 1, {
-      products: [
-        { name: 'A', unit: 'تن', sales: 1, revenue: 90 },
-        { name: 'B', unit: 'تن', sales: 1, revenue: 100 },
-      ],
-    }),
-    report(1405, 2, {
-      products: [
-        { name: 'A', unit: 'تن', sales: 1, revenue: 90 },
-        { name: 'C', unit: 'تن', sales: 1, revenue: 100 },
-      ],
-    }),
-  ];
-
+test('reported company totals take precedence over product-cell sums', () => {
   const result = aggregatePeriod(
-    reports,
+    [report(1405, 1, {
+      production: 100,
+      sales: 80,
+      revenue: 900,
+      rate: 700,
+      products: [
+        { name: 'A', unit: 'تن', production: 5, sales: 4, revenue: 50, rate: 10 },
+        { name: 'B', unit: 'تن', production: 3, sales: 2, revenue: 30, rate: 20 },
+      ],
+    })],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.equal(result.metrics.dominantProductProduction, 100);
+  assert.equal(result.metrics.dominantProductSales, 80);
+  assert.equal(result.metrics.dominantProductRevenue, 900);
+  assert.equal(result.metrics.dominantProductRate, 900_000_000 / 80);
+});
+
+test('missing totals fall back to all product cells despite unit mismatch', () => {
+  const result = aggregatePeriod(
+    [{
+      year: 1405,
+      month: 1,
+      totals: { unitsCompatible: false, units: ['تن', 'عدد'] },
+      products: [
+        { name: 'A', unit: 'تن', production: 12, sales: 10, revenue: 150, rate: 15 },
+        { name: 'B', unit: 'عدد', production: 8, sales: 7, revenue: 70, rate: 10 },
+      ],
+    }],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.equal(result.metrics.dominantProductProduction, 20);
+  assert.equal(result.metrics.dominantProductSales, 17);
+  assert.equal(result.metrics.dominantProductRevenue, 220);
+  assert.equal(result.metrics.dominantProductRate, 220_000_000 / 17);
+  assert.equal(result.totals.unitsCompatible, false);
+  assert.deepEqual(result.totals.units, ['تن', 'عدد']);
+});
+
+test('raw quantities are not converted before summing different unit scales', () => {
+  const result = aggregatePeriod(
+    [{
+      year: 1405,
+      month: 1,
+      totals: { unitsCompatible: false },
+      products: [
+        { name: 'A', unit: 'هزار تن', production: 3, sales: 2, revenue: 2_000, rate: 1_000_000 },
+        { name: 'B', unit: 'تن', production: 4, sales: 3, revenue: 900, rate: 300_000 },
+      ],
+    }],
+    [{ year: 1405, month: 1 }],
+  );
+
+  assert.equal(result.metrics.dominantProductProduction, 7);
+  assert.equal(result.metrics.dominantProductSales, 5);
+  assert.equal(result.metrics.dominantProductRate, 2_900_000_000 / 5);
+  assert.equal(result.totals.unitsCompatible, false);
+});
+
+test('a unit change between otherwise compatible monthly reports is flagged', () => {
+  const result = aggregatePeriod(
+    [
+      report(1405, 1, { unit: 'تن', production: 10 }),
+      report(1405, 2, { unit: 'عدد', production: 20 }),
+    ],
     [{ year: 1405, month: 1 }, { year: 1405, month: 2 }],
-  );
-  assert.equal(result.dominantProduct.name, 'A، B');
-  assert.deepEqual(result.dominantProduct.names, ['A', 'B']);
-  assert.equal(result.dominantProduct.periodRevenueTotal, 280);
-  assert.ok(result.dominantProduct.revenueShare > 0.5);
-});
-
-test('dominant basket keeps adding revenue-ranked products until it strictly exceeds 50 percent', () => {
-  const result = aggregatePeriod(
-    [report(1405, 1, {
-      products: [
-        { name: 'A', unit: 'تن', production: 5, sales: 5, revenue: 50 },
-        { name: 'B', unit: 'تن', production: 3, sales: 3, revenue: 30 },
-        { name: 'C', unit: 'تن', production: 2, sales: 2, revenue: 20 },
-      ],
-    })],
-    [{ year: 1405, month: 1 }],
+    { average: true },
   );
 
-  assert.deepEqual(result.dominantProduct.names, ['A', 'B']);
-  assert.equal(result.dominantProduct.revenueShare, 0.8);
-  assert.equal(result.metrics.dominantProductProduction, 8);
-  assert.equal(result.metrics.dominantProductSales, 8);
-  assert.equal(result.metrics.dominantProductRevenue, 80);
-  assert.equal(result.metrics.dominantProductRate, 10_000_000);
+  assert.equal(result.metrics.dominantProductProduction, 15);
+  assert.equal(result.totals.unitsCompatible, false);
+  assert.deepEqual(result.totals.units, ['تن', 'عدد']);
 });
 
-test('a company with one sale product uses that product as its dominant basket', () => {
-  const result = aggregatePeriod(
-    [report(1405, 1, {
-      products: [{ name: 'Only', unit: 'تن', production: 12, sales: 10, revenue: 150 }],
-    })],
-    [{ year: 1405, month: 1 }],
-  );
-
-  assert.deepEqual(result.dominantProduct.names, ['Only']);
-  assert.equal(result.dominantProduct.revenueShare, 1);
-});
-
-test('dominant basket rate converts prefixed quantity units to their base unit', () => {
-  const result = aggregatePeriod(
-    [report(1405, 1, {
-      unit: 'هزار تن',
-      products: [{ name: 'A', unit: 'هزار تن', production: 3, sales: 2, revenue: 2_000 }],
-    })],
-    [{ year: 1405, month: 1 }],
-  );
-
-  assert.equal(result.metrics.dominantProductRate, 1_000_000);
-  assert.equal(result.dominantProduct.unit, 'هزار تن');
-  assert.equal(result.dominantProduct.rateUnit, 'تن');
-});
-
-test('period dominant metrics are null when every product has zero revenue', () => {
+test('zero totals remain valid values', () => {
   const result = aggregatePeriod(
     [
       report(1405, 1, {
+        production: 0,
         sales: 22,
         revenue: 0,
+        rate: 0,
         products: [
-          { name: 'A', unit: 'تن', sales: 12, revenue: 0 },
-          { name: 'B', unit: 'تن', sales: 10, revenue: 0 },
+          { name: 'A', unit: 'تن', production: 0, sales: 12, revenue: 0, rate: 0 },
+          { name: 'B', unit: 'تن', production: 0, sales: 10, revenue: 0, rate: 0 },
         ],
       }),
     ],
     [{ year: 1405, month: 1 }],
   );
 
-  assert.equal(result.dominantProduct, null);
-  assert.equal(result.metrics.dominantProductProduction, null);
-  assert.equal(result.metrics.dominantProductSales, null);
-  assert.equal(result.metrics.dominantProductRevenue, null);
-  assert.equal(result.metrics.dominantProductRate, null);
+  assert.equal(result.metrics.dominantProductProduction, 0);
+  assert.equal(result.metrics.dominantProductSales, 22);
+  assert.equal(result.metrics.dominantProductRevenue, 0);
+  assert.equal(result.metrics.dominantProductRate, 0);
 });
 
-test('incompatible company totals do not suppress a compatible dominant basket', () => {
+test('incompatible company units do not suppress company totals', () => {
   const result = aggregatePeriod(
     [report(1405, 1, { unitsCompatible: false, revenue: 500 })],
     [{ year: 1405, month: 1 }],
   );
 
-  assert.equal(result.dominantProduct.name, 'محصول اصلی');
   assert.equal(result.metrics.dominantProductProduction, 100);
   assert.equal(result.metrics.dominantProductSales, 10);
   assert.equal(result.metrics.dominantProductRevenue, 500);
+  assert.equal(result.metrics.dominantProductRate, 50_000_000);
+  assert.equal(result.totals.unitsCompatible, false);
 });
 
 test('missing reports are exposed in metadata and do not fabricate zeroes', () => {

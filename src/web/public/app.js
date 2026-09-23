@@ -14,10 +14,10 @@ const GROWTH_COLUMNS = Object.freeze([
 ]);
 
 const METRICS = Object.freeze([
-  { key: "dominantProduction", label: "مقدار تولید سبد غالب", unit: "واحد محصول" },
-  { key: "dominantSales", label: "مقدار فروش سبد غالب", unit: "واحد محصول" },
-  { key: "dominantRevenue", label: "مبلغ فروش سبد غالب", unit: "میلیون ریال" },
-  { key: "dominantRate", label: "نرخ فروش سبد غالب", unit: "ریال / واحد" },
+  { key: "dominantProduction", label: "مجموع تولید", unit: "واحد محصول" },
+  { key: "dominantSales", label: "مجموع فروش", unit: "واحد محصول" },
+  { key: "dominantRevenue", label: "مجموع مبلغ فروش", unit: "میلیون ریال" },
+  { key: "dominantRate", label: "نرخ فروش کل", unit: "ریال / واحد" },
 ]);
 
 const JALALI_MONTHS = Object.freeze([
@@ -36,6 +36,7 @@ const state = {
   sortMetric: "dominantRevenue",
   sortColumn: "targetYoY",
   sortDirection: null,
+  sortByUpdatedAt: false,
   visibleMetricKeys: new Set(METRICS.map((metric) => metric.key)),
   tableView: false,
   busyAction: null,
@@ -65,6 +66,7 @@ const elements = {
   sortColumn: document.querySelector("#sortColumn"),
   sortAscendingButton: document.querySelector("#sortAscendingButton"),
   sortDescendingButton: document.querySelector("#sortDescendingButton"),
+  sortLatestUpdateButton: document.querySelector("#sortLatestUpdateButton"),
   tableViewToggle: document.querySelector("#tableViewToggle"),
   dashboardContent: document.querySelector("#dashboardContent"),
   dashboardActionsForm: document.querySelector("#dashboardActionsForm"),
@@ -340,7 +342,9 @@ function renderMetadata() {
   const industries = getIndustries();
   const companies = industries.flatMap((industry) => industry.companies ?? []);
   const complete = companies.filter((company) => statusTone(company.status) === "complete").length;
-  const incomplete = companies.filter((company) => missingDisplayedValueCount(company) > 0).length;
+  const incomplete = companies.filter((company) => (
+    missingDisplayedValueCount(company) > 0 || hasUnitMismatch(company)
+  )).length;
 
   elements.industryCount.textContent = faInteger.format(industries.length);
   elements.incompleteButtonCount.textContent = faInteger.format(incomplete);
@@ -369,28 +373,44 @@ function missingDisplayedValueCount(company) {
   return missing;
 }
 
+function hasUnitMismatch(company) {
+  if (company?.unitMismatch === true) return true;
+  return PERIOD_COLUMNS.some((column) => {
+    const period = company?.periods?.[column.key];
+    return period?.unitMismatch === true
+      || (period?.unitsCompatible === false && (finiteNumber(period?.reportCount) ?? 0) > 0);
+  });
+}
+
 function incompleteCompanies() {
   return getIndustries()
     .flatMap((industry) => (industry.companies ?? []).map((company) => ({
       company,
       industryName: industry.industryName || "صنعت نامشخص",
       missingCount: missingDisplayedValueCount(company),
+      unitMismatch: hasUnitMismatch(company),
     })))
-    .filter((item) => item.missingCount > 0)
+    .filter((item) => item.missingCount > 0 || item.unitMismatch)
     .sort((left, right) => companySymbol(left.company).localeCompare(companySymbol(right.company), "fa"));
 }
 
 function openIncompleteDialog() {
   const companies = incompleteCompanies();
+  const unitMismatchCount = companies.filter((item) => item.unitMismatch).length;
+  const missingCellCompanyCount = companies.filter((item) => item.missingCount > 0).length;
+  const missingCellCount = companies.reduce((sum, item) => sum + item.missingCount, 0);
   elements.incompleteDialogDescription.textContent = companies.length
-    ? `${faInteger.format(companies.length)} نماد دست‌کم یک مقدار خالی در جدول تحلیلی دارند.`
-    : "هیچ نمادی با مقدار خالی در جدول تحلیلی پیدا نشد.";
+    ? `از مجموع ${faInteger.format(companies.length)} نماد ناقص، ${faInteger.format(unitMismatchCount)} نماد تگ عدم تطابق واحد و ${faInteger.format(missingCellCompanyCount)} نماد تگ سلول ناقص دارند؛ در مجموع ${faInteger.format(missingCellCount)} سلول خالی است.`
+    : "هیچ نماد ناقصی در جدول تحلیلی پیدا نشد.";
   elements.incompleteList.innerHTML = companies.length
-    ? companies.map(({ company, industryName, missingCount }) => `
+    ? companies.map(({ company, industryName, missingCount, unitMismatch }) => `
         <div class="incomplete-item">
           <strong class="incomplete-symbol">${escapeHtml(companySymbol(company) || "—")}</strong>
           <span class="incomplete-name" title="${escapeHtml(company.name || industryName)}">${escapeHtml(company.name || industryName)}</span>
-          <span class="incomplete-missing-count">${faInteger.format(missingCount)} مقدار خالی</span>
+          <span class="incomplete-reasons">
+            ${missingCount ? `<span class="incomplete-reason-tag incomplete-missing-count">${faInteger.format(missingCount)} سلول ناقص</span>` : ""}
+            ${unitMismatch ? '<span class="incomplete-reason-tag">عدم تطابق واحد</span>' : ""}
+          </span>
         </div>
       `).join("")
     : '<div class="incomplete-empty">اطلاعات همه نمادهای موجود کامل است.</div>';
@@ -531,6 +551,18 @@ function renderActiveIndustry() {
 }
 
 function sortCompanies(companies) {
+  if (state.sortByUpdatedAt) {
+    return [...companies].sort((left, right) => {
+      const leftTimestamp = Date.parse(left?.updatedAt ?? "");
+      const rightTimestamp = Date.parse(right?.updatedAt ?? "");
+      const comparison = globalThis.CodalDashboardSorting.compareNullableNumbers(
+        Number.isFinite(leftTimestamp) ? leftTimestamp : null,
+        Number.isFinite(rightTimestamp) ? rightTimestamp : null,
+        "desc",
+      );
+      return comparison || companySymbol(left).localeCompare(companySymbol(right), "fa");
+    });
+  }
   if (!state.sortDirection) return [...companies];
   return [...companies].sort((left, right) => {
     const leftValue = finiteNumber(left.growth?.[state.sortColumn]?.[state.sortMetric]);
@@ -602,11 +634,14 @@ function metricCell(value, { isGrowth = false, note = "", growthStart = false } 
 function companyMetricUnit(company, metric) {
   const target = company.periods?.target;
   if (metric.key === "dominantRevenue") return metric.unit;
+  if (hasUnitMismatch(company)) {
+    return metric.key === "dominantRate" ? "نرخ محاسبه‌شده با واحدهای مختلف" : "واحدهای مختلف";
+  }
+  const unit = target?.unit || target?.units?.[0] || null;
   if (metric.key === "dominantRate") {
-    const unit = target?.dominantProductRateUnit;
     return unit ? `ریال / ${unit}` : metric.unit;
   }
-  return target?.dominantProductUnit || metric.unit;
+  return unit || metric.unit;
 }
 
 function visibleMetrics() {
@@ -625,7 +660,7 @@ function renderUnifiedTable(companies) {
     const selected = state.selectedSymbols.has(symbol);
     const status = companyStatusLabel(company);
     const tone = statusTone(status);
-    const dominantProduct = company.periods?.target?.dominantProductName ?? null;
+    const unitMismatch = hasUnitMismatch(company);
     return displayedMetrics.map((metric, metricIndex) => {
       const periodCells = PERIOD_COLUMNS.map((column) => (
         metricCell(company.periods?.[column.key]?.metrics?.[metric.key])
@@ -651,7 +686,7 @@ function renderUnifiedTable(companies) {
                   <small title="${escapeHtml(company.name || "")}">${escapeHtml(company.name || "نام شرکت ثبت نشده")}</small>
                 </span>
                 <span class="badge status-${tone}">${escapeHtml(status)}</span>
-                ${dominantProduct ? `<small class="unified-dominant">سبد غالب: ${escapeHtml(dominantProduct)}</small>` : ""}
+                ${unitMismatch ? '<span class="badge badge-unit-mismatch">عدم تطابق واحد</span>' : ""}
               </div>
             </th>
           ` : ""}
@@ -695,7 +730,7 @@ function renderCompanyCard(company) {
   const status = companyStatusLabel(company);
   const tone = statusTone(status);
   const errors = Array.isArray(company.errors) ? company.errors.filter(Boolean) : [];
-  const targetDominantProduct = company.periods?.target?.dominantProductName ?? null;
+  const unitMismatch = hasUnitMismatch(company);
 
   const headers = [
     ...PERIOD_COLUMNS.map((column) => definitionLabel(company, column)),
@@ -747,7 +782,7 @@ function renderCompanyCard(company) {
         <div class="company-badges">
           <span class="badge status-${tone}">${escapeHtml(status)}</span>
           <span class="badge">${escapeHtml(fiscalEndLabel(company.fiscalYearEndMonth))}</span>
-          ${targetDominantProduct ? `<span class="badge badge-dominant"><span>سبد غالب:</span> ${escapeHtml(targetDominantProduct)}</span>` : ""}
+          ${unitMismatch ? '<span class="badge badge-unit-mismatch">عدم تطابق واحد</span>' : ""}
           <span class="badge">بروزرسانی: ${escapeHtml(formatDateTime(company.updatedAt ?? state.dashboard?.metadata?.generatedAt))}</span>
         </div>
         <div class="coverage" aria-label="پوشش گزارش ${faPercent.format(coverage)}">
@@ -911,11 +946,14 @@ function openUpdateDialog(scope) {
   elements.dialogTitle.textContent = scope === "all" ? "آپدیت همه نمادها" : "آپدیت نمادهای انتخاب‌شده";
   elements.dialogDescription.textContent = scope === "all"
     ? initialLoad || forceFullRefresh
-      ? `${count ? `گزارش‌های ${faInteger.format(count)} شرکت تولیدی` : "گزارش‌های تمام شرکت‌های تولیدی فعال"} ${initialLoad ? "برای بار نخست" : "به‌دلیل تغییر منطق سبد غالب، در این مرحله"} به‌طور کامل از کدال دریافت می‌شوند. میان پایان هر نماد و شروع نماد بعدی ۱۰ ثانیه فاصله خواهد بود.`
+      ? `${count ? `گزارش‌های ${faInteger.format(count)} شرکت تولیدی` : "گزارش‌های تمام شرکت‌های تولیدی فعال"} ${initialLoad ? "برای بار نخست" : "به‌دلیل تغییر منطق محاسبه مجموع کل، در این مرحله"} به‌طور کامل از کدال دریافت می‌شوند. میان پایان هر نماد و شروع نماد بعدی ۱۰ ثانیه فاصله خواهد بود.`
       : `فهرست اطلاعیه‌های ${count ? faInteger.format(count) : "تمام"} شرکت بررسی می‌شود و فقط گزارش‌های تازه یا اصلاحیه‌ها استخراج و ذخیره می‌شوند. نمادهای بدون تغییر دوباره دانلود نمی‌شوند.`
     : forceFullRefresh
       ? `تمام گزارش‌های موردنیاز ${faInteger.format(count)} نماد انتخاب‌شده دوباره از کدال دریافت، پردازش و در پایگاه داده ذخیره می‌شوند.`
       : `اطلاعیه‌های ${faInteger.format(count)} نماد انتخاب‌شده بررسی می‌شوند و فقط گزارش تازه یا اصلاحیه در پایگاه داده جایگزین خواهد شد.`;
+  if (scope === "selected") {
+    elements.dialogDescription.textContent = `در حالت آزمایشی، تمام گزارش‌های موردنیاز ${faInteger.format(count)} نماد انتخاب‌شده بدون توجه به داده‌های قبلی دوباره از کدال دریافت، پردازش و ذخیره می‌شوند.`;
+  }
   if (typeof elements.updateDialog.showModal === "function") {
     elements.updateDialog.returnValue = "";
     elements.updateDialog.showModal();
@@ -1169,18 +1207,34 @@ elements.metricVisibilityMenu.addEventListener("change", (event) => {
 
 elements.sortMetric.addEventListener("change", () => {
   state.sortMetric = elements.sortMetric.value;
+  setSortByUpdatedAt(false);
   setSortDirection(null);
   renderActiveIndustry();
 });
 
 elements.sortColumn.addEventListener("change", () => {
   state.sortColumn = elements.sortColumn.value;
+  setSortByUpdatedAt(false);
   setSortDirection(null);
   renderActiveIndustry();
 });
 
 function setSortDirection(direction) {
   state.sortDirection = direction;
+  if (direction) state.sortByUpdatedAt = false;
+  elements.sortAscendingButton.classList.toggle("active", state.sortDirection === "asc");
+  elements.sortDescendingButton.classList.toggle("active", state.sortDirection === "desc");
+  elements.sortAscendingButton.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
+  elements.sortDescendingButton.setAttribute("aria-pressed", String(state.sortDirection === "desc"));
+  elements.sortLatestUpdateButton.classList.toggle("active", state.sortByUpdatedAt);
+  elements.sortLatestUpdateButton.setAttribute("aria-pressed", String(state.sortByUpdatedAt));
+}
+
+function setSortByUpdatedAt(active) {
+  state.sortByUpdatedAt = active;
+  if (active) state.sortDirection = null;
+  elements.sortLatestUpdateButton.classList.toggle("active", state.sortByUpdatedAt);
+  elements.sortLatestUpdateButton.setAttribute("aria-pressed", String(state.sortByUpdatedAt));
   elements.sortAscendingButton.classList.toggle("active", state.sortDirection === "asc");
   elements.sortDescendingButton.classList.toggle("active", state.sortDirection === "desc");
   elements.sortAscendingButton.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
@@ -1194,6 +1248,10 @@ function toggleSortDirection(direction) {
 
 elements.sortAscendingButton.addEventListener("click", () => toggleSortDirection("asc"));
 elements.sortDescendingButton.addEventListener("click", () => toggleSortDirection("desc"));
+elements.sortLatestUpdateButton.addEventListener("click", () => {
+  setSortByUpdatedAt(!state.sortByUpdatedAt);
+  renderActiveIndustry();
+});
 
 elements.tableViewToggle.addEventListener("change", () => {
   state.tableView = elements.tableViewToggle.checked;

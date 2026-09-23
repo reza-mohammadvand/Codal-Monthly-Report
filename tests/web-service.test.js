@@ -96,7 +96,7 @@ test("dashboard is reconstructed from persisted database data", () => {
   );
 });
 
-test("selected update refreshes exactly the requested pilot symbols and persists the result", async () => {
+test("selected update force-refreshes exactly the requested pilot symbols and persists the result", async () => {
   const database = fakeDatabase(collection(["فولاد"]));
   const calls = [];
   const refreshed = collection(["کگل"]);
@@ -120,8 +120,9 @@ test("selected update refreshes exactly the requested pilot symbols and persists
   assert.deepEqual(calls[0].symbols, ["کگل"]);
   assert.equal(calls[0].refresh, false);
   assert.equal(calls[0].refreshSearch, true);
-  assert.equal(calls[0].refreshReports, false);
+  assert.equal(calls[0].refreshReports, true);
   assert.equal(calls[0].forceReparseReports, false);
+  assert.deepEqual(calls[0].forceReparseSymbols, ["کگل"]);
   assert.equal(calls[0].companyDelayMs, 10_000);
   assert.equal(calls[0].existingCompanies.length, 1);
   assert.equal(calls[0].asOf, "1405/06/09");
@@ -129,6 +130,25 @@ test("selected update refreshes exactly the requested pilot symbols and persists
   assert.equal(dashboard.industries[0].companies[0].symbol, "کگل");
   assert.equal(service.getUpdateState().running, false);
   assert.equal(service.getUpdateState().completed, 1);
+});
+
+test("selected unit-mismatch companies are forced through report reparsing", async () => {
+  const stored = collection(["فولاد"]);
+  stored.industryGroups[0].companies[0].unitMismatch = true;
+  let receivedOptions = null;
+  const service = new DashboardService({
+    database: fakeDatabase(stored),
+    collect: async (options) => {
+      receivedOptions = options;
+      return stored;
+    },
+    logger: null,
+  });
+
+  await service.update({ scope: "selected", symbols: ["فولاد"] });
+
+  assert.equal(receivedOptions.refreshReports, true);
+  assert.deepEqual(receivedOptions.forceReparseSymbols, ["فولاد"]);
 });
 
 test("all update scans one recent window instead of checking every stored company", async () => {

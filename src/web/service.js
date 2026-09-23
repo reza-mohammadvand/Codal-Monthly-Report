@@ -94,7 +94,12 @@ function isMissingNumber(value) {
 }
 
 function hasIncompleteDisplayedData(company) {
-  return DISPLAY_PERIOD_KEYS.some((periodKey) => (
+  const hasUnitMismatch = company?.unitMismatch === true || DISPLAY_PERIOD_KEYS.some((periodKey) => {
+    const period = company?.periods?.[periodKey];
+    return period?.unitMismatch === true
+      || (period?.unitsCompatible === false && Number(period?.reportCount) > 0);
+  });
+  return hasUnitMismatch || DISPLAY_PERIOD_KEYS.some((periodKey) => (
     DISPLAY_METRIC_KEYS.some((metricKey) => (
       isMissingNumber(company?.periods?.[periodKey]?.metrics?.[metricKey])
     ))
@@ -239,15 +244,10 @@ export class DashboardService {
         "EMPTY_SELECTION",
       );
     }
-    const selectedSymbolSet = new Set(selectedSymbols.map(normalizeCodalText));
-    const forceReparseSymbols = storedCompanies
-      .filter((company) => (
-        hasIncompleteDisplayedData(company)
-        && !updateAll
-        && selectedSymbolSet.has(normalizeCodalText(company.symbol))
-      ))
-      .map((company) => company.symbol)
-      .filter(Boolean);
+    // Temporary testing mode: every explicitly selected symbol must bypass the
+    // stored-report identity shortcut and be downloaded and parsed again. Restore
+    // the incomplete-only filter after the new totals calculation is validated.
+    const forceReparseSymbols = updateAll ? [] : [...selectedSymbols];
 
     const startedAt = new Date().toISOString();
     this.updateState = {
@@ -435,4 +435,5 @@ export class DashboardService {
       companyCount: companies.length,
     };
   }
+
 }

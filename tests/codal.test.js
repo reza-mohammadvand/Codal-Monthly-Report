@@ -68,23 +68,21 @@ test('production parser detects monthly/YTD periods and aggregates repeated prod
   assert.equal(parsed.cumulativeCurrent.date.value, '1405/05/31');
   assert.equal(parsed.cumulativePriorYear.date.value, '1404/05/31');
 
-  // Product A wins only after domestic + export sections are combined (120 + 100 > 200).
-  assert.equal(parsed.monthly.dominantProduct.name, 'محصول الف');
-  assert.equal(parsed.monthly.dominantProduct.salesQuantity, 20);
-  assert.equal(parsed.monthly.dominantProduct.sales, 20);
-  assert.equal(parsed.monthly.dominantProduct.revenue, 220);
-  assert.equal(parsed.monthly.dominantProduct.rate, 11_000_000);
-  assert.deepEqual(parsed.monthly.dominantProduct.sections, ['domestic', 'export']);
+  // Repeated product rows remain grouped for fallback total calculations.
+  assert.equal(parsed.monthly.products[0].name, 'محصول الف');
+  assert.equal(parsed.monthly.products[0].salesQuantity, 20);
+  assert.equal(parsed.monthly.products[0].revenue, 220);
 
-  // Mixed "تن" and "عدد" must not be summed into a meaningless company quantity/rate.
+  // Mixed units are still summed, but the mismatch remains explicit metadata.
   assert.equal(parsed.monthly.totals.revenue, 430);
-  assert.equal(parsed.monthly.totals.production, null);
-  assert.equal(parsed.monthly.totals.salesQuantity, null);
-  assert.equal(parsed.monthly.totals.sales, null);
-  assert.equal(parsed.monthly.totals.weightedRate, null);
+  assert.equal(parsed.monthly.totals.production, 25);
+  assert.equal(parsed.monthly.totals.salesQuantity, 32);
+  assert.equal(parsed.monthly.totals.sales, 32);
+  assert.equal(parsed.monthly.totals.rate, 430_000_000 / 32);
+  assert.equal(parsed.monthly.totals.weightedRate, 430_000_000 / 32);
   assert.equal(parsed.monthly.totals.compatibleUnits, false);
   assert.equal(parsed.monthly.totals.unitsCompatible, false);
-  assert.match(parsed.warnings.join(' '), /units differ/);
+  assert.match(parsed.warnings.join(' '), /without unit conversion/);
 });
 
 test('production parser recovers tables from Codal embedded datasource pages', async () => {
@@ -126,7 +124,7 @@ test('production parser recovers tables from Codal embedded datasource pages', a
   const parsed = parseProductionSalesReport(embeddedHtml);
   assert.equal(parsed.tableFound, true);
   assert.equal(parsed.monthly.date.value, '1405/05/31');
-  assert.equal(parsed.monthly.dominantProduct.name, 'محصول الف');
+  assert.equal(parsed.monthly.products[0].name, 'محصول الف');
 
   const requests = [];
   const client = new CodalClient({
@@ -146,7 +144,7 @@ test('production parser recovers tables from Codal embedded datasource pages', a
   ]);
 });
 
-test('weighted total rate is calculated when all units are compatible', () => {
+test('company totals produce a weighted sales rate when units are compatible', () => {
   const compatibleHtml = productionSalesHtml.replace(
     /<tr><td>محصول ناسازگار[\s\S]*?<\/tr>/,
     '',
@@ -155,10 +153,11 @@ test('weighted total rate is calculated when all units are compatible', () => {
   assert.equal(monthly.totals.production, 23);
   assert.equal(monthly.totals.salesQuantity, 30);
   assert.equal(monthly.totals.revenue, 420);
-  assert.equal(monthly.totals.weightedRate, (420 * 1_000_000) / 30);
+  assert.equal(monthly.totals.rate, 420_000_000 / 30);
+  assert.equal(monthly.totals.weightedRate, 420_000_000 / 30);
 });
 
-test('all-zero product revenue leaves the dominant product undefined', () => {
+test('all-zero product revenue preserves explicit zero company totals', () => {
   const zeroRevenueHtml = `
   <html><body>
     <div>تولید و فروش - کلیه مبالغ به میلیون ریال است</div>
@@ -183,11 +182,11 @@ test('all-zero product revenue leaves the dominant product undefined', () => {
   assert.equal(monthly.totals.production, 18);
   assert.equal(monthly.totals.salesQuantity, 22);
   assert.equal(monthly.totals.revenue, 0);
+  assert.equal(monthly.totals.rate, 0);
   assert.equal(monthly.totals.weightedRate, 0);
-  assert.equal(monthly.dominantProduct, null);
 });
 
-test('returns and discounts affect net totals but cannot become the dominant product', () => {
+test('returns and discounts affect fallback and reported company totals', () => {
   const adjustmentHtml = `
   <html><body>
     <div>تولید و فروش - کلیه مبالغ به میلیون ریال است</div>
@@ -212,11 +211,9 @@ test('returns and discounts affect net totals but cannot become the dominant pro
   </body></html>`;
 
   const monthly = parseProductionSalesReport(adjustmentHtml).monthly;
-  assert.equal(monthly.dominantProduct.name, 'محصول الف');
-  assert.equal(monthly.dominantProduct.salesQuantity, 9);
-  assert.equal(monthly.dominantProduct.revenue, 90);
-  assert.equal(monthly.dominantProduct.rate, 10_000_000);
-  assert.deepEqual(monthly.dominantProduct.sections, ['domestic', 'returns']);
+  assert.equal(monthly.products[0].name, 'محصول الف');
+  assert.equal(monthly.products[0].salesQuantity, 9);
+  assert.equal(monthly.products[0].revenue, 90);
   assert.equal(monthly.products.some((product) => /تخفیف/.test(product.name)), false);
   assert.equal(monthly.adjustments.length, 1);
   assert.equal(monthly.adjustments[0].section, 'discounts');
@@ -226,7 +223,8 @@ test('returns and discounts affect net totals but cannot become the dominant pro
   assert.equal(monthly.calculatedRevenue, 165);
   assert.equal(monthly.reportedTotals.revenue, 164);
   assert.equal(monthly.totals.revenue, 164);
-  assert.equal(monthly.totals.weightedRate, (164 * 1_000_000) / 14);
+  assert.equal(monthly.totals.rate, 164_000_000 / 14);
+  assert.equal(monthly.totals.weightedRate, 164_000_000 / 14);
 });
 
 test('latest correction is selected for each symbol and Jalali month', () => {
@@ -241,6 +239,18 @@ test('latest correction is selected for each symbol and Jalali month', () => {
   assert.equal(selectLatestReportForMonth(reports, 1404, 9, 'فولاد').TracingNo, 2);
   assert.deepEqual(extractReportPeriod(reports[0]), {
     year: 1404, month: 9, day: 30, key: '1404/09', value: '1404/09/30',
+  });
+});
+
+test('the report title determines a correction period when API date fields conflict', () => {
+  const period = extractReportPeriod({
+    Title: 'Monthly activity ending 1405/04/31 (correction)',
+    PeriodEndToDate: '1405/06/31',
+    EndDate: '1405/06/31',
+  });
+
+  assert.deepEqual(period, {
+    year: 1405, month: 4, day: 31, key: '1405/04', value: '1405/04/31',
   });
 });
 

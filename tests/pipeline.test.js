@@ -13,7 +13,7 @@ import {
   summarizeCompanyStatuses,
 } from "../src/pipeline.js";
 
-test("growth remains calculable when the dominant basket changes between periods", () => {
+test("growth remains calculable across period totals", () => {
   const growth = buildGrowthPeriod(
     {
       dominantProductName: "A، B",
@@ -421,9 +421,11 @@ test("incremental updates reuse stored monthly data when Codal has no newer fili
           production: 250,
           salesQuantity: 240,
           revenue: 5_000,
-          weightedRate: 20,
-          unit: "تن",
-          compatibleUnits: true,
+          rate: 30,
+          weightedRate: null,
+          unit: null,
+          units: ["تن", "عدد"],
+          compatibleUnits: false,
         },
         products: [{
           name: "محصول",
@@ -458,6 +460,10 @@ test("incremental updates reuse stored monthly data when Codal has no newer fili
   assert.equal(changed.companies[0].newOrChangedReportCount, 1);
   assert.equal(changed.companies[0].downloadedReportCount, 1);
   assert.equal(changed.companies[0].monthlyReports.at(-1).source.tracingNo, 99_999);
+  assert.equal(changed.companies[0].status, "ناقص");
+  assert.equal(changed.companies[0].unitMismatch, true);
+  assert.deepEqual(changed.companies[0].unitMismatchUnits, ["تن", "عدد"]);
+  assert.match(changed.companies[0].errors.join(" "), /عدم تطابق واحد/);
 });
 
 test("recent scan uses one global Codal search and keeps only manufacturing symbols", async () => {
@@ -513,6 +519,109 @@ test("recent scan uses one global Codal search and keeps only manufacturing symb
   assert.equal(result.companies[0].updateAction, "unchanged");
   assert.equal(result.metadata.recentScan.reportCount, 2);
   assert.equal(result.metadata.recentScan.matchedCompanyCount, 1);
+});
+
+test("a late correction updates its title month while the latest real report remains the target", async () => {
+  const months = [];
+  for (let month = 1; month <= 12; month += 1) months.push({ year: 1404, month });
+  for (let month = 1; month <= 5; month += 1) months.push({ year: 1405, month });
+  const monthlyReports = months.map(({ year, month }, index) => ({
+    year,
+    month,
+    revenueScale: 1_000_000,
+    totals: {
+      production: 100 + index,
+      sales: 80 + index,
+      revenue: 1_000 + index,
+      rate: ((1_000 + index) * 1_000_000) / (80 + index),
+      weightedRate: ((1_000 + index) * 1_000_000) / (80 + index),
+      unit: "ton",
+      units: ["ton"],
+      unitsCompatible: true,
+    },
+    products: [],
+    source: {
+      tracingNo: 10_000 + index,
+      title: `Monthly activity ending ${year}/${String(month).padStart(2, "0")}/28`,
+    },
+    warnings: [],
+  }));
+  const correction = {
+    Symbol: "TEST",
+    TracingNo: 99_999,
+    Title: "Monthly activity ending 1405/04/31 (correction)",
+    PeriodEndToDate: "1405/06/31",
+    PublishDateTime: "1405/06/31 18:00:00",
+  };
+  let parseCalls = 0;
+  const client = {
+    async fetchProductionCompanies() {
+      return [company("TEST")];
+    },
+    async fetchIndustries() {
+      return [{ Id: 27, Name: "Test industry" }];
+    },
+    async searchMonthlyReports() {
+      return [correction];
+    },
+    async fetchAndParseReport() {
+      parseCalls += 1;
+      return {
+        revenueMultiplier: 1_000_000,
+        monthly: {
+          date: { year: 1405, month: 6 },
+          totals: {
+            production: 444,
+            salesQuantity: 400,
+            revenue: 8_000,
+            rate: 20_000_000,
+            weightedRate: 20_000_000,
+            unit: "ton",
+            units: ["ton"],
+            compatibleUnits: true,
+          },
+          products: [],
+        },
+        warnings: [],
+      };
+    },
+  };
+  const existingCompany = {
+    symbol: "TEST",
+    name: "Test company",
+    industryId: 27,
+    status: "complete",
+    fiscalYearEndMonth: 12,
+    financialYears: ["1405/12/29"],
+    calculationVersion: CALCULATION_VERSION,
+    periods: { target: { metrics: {} }, currentYtd: { metrics: {} } },
+    growth: { targetYoY: {}, targetMoM: {} },
+    monthlyReports,
+  };
+
+  const result = await collectMonthlyReportData(
+    {
+      asOf: "1405/07/01",
+      recentDays: 2,
+      existingCompanies: [existingCompany],
+      logger: null,
+    },
+    { client, now: () => new Date("2026-09-23T12:00:00.000Z") },
+  );
+
+  const [processed] = result.companies;
+  assert.equal(parseCalls, 1);
+  assert.deepEqual(processed.scheduledTargetMonth, { year: 1405, month: 6 });
+  assert.deepEqual(processed.effectiveTargetMonth, { year: 1405, month: 5 });
+  assert.equal(processed.targetFallbackApplied, true);
+  assert.deepEqual(processed.definitions.targetMonth, { year: 1405, month: 5 });
+  assert.deepEqual(processed.definitions.previousMonth, { year: 1405, month: 4 });
+  assert.equal(processed.periods.target.metrics.dominantProduction, 116);
+  assert.equal(processed.periods.previous.metrics.dominantProduction, 444);
+  assert.equal(processed.monthlyReports.find((report) => report.year === 1405 && report.month === 4)?.source.tracingNo, 99_999);
+  assert.equal(processed.monthlyReports.some((report) => report.year === 1405 && report.month === 6), false);
+  assert.deepEqual(result.metadata.targetMonth, { year: 1405, month: 5 });
+  assert.equal(result.metadata.targetFallbackApplied, true);
 });
 
 test("recent scan completes without company requests when no production symbol matched", async () => {
