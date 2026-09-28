@@ -34,11 +34,12 @@ const state = {
   expandedSymbols: new Set(),
   searchQuery: "",
   sortMetric: "dominantRevenue",
-  sortColumn: "targetYoY",
+  sortColumn: null,
   sortDirection: null,
   sortByUpdatedAt: false,
   visibleMetricKeys: new Set(METRICS.map((metric) => metric.key)),
   tableView: false,
+  latestMonthOnly: false,
   busyAction: null,
   pendingUpdateScope: null,
   toastTimer: null,
@@ -63,11 +64,10 @@ const elements = {
   companySearch: document.querySelector("#companySearch"),
   metricVisibilityMenu: document.querySelector("#metricVisibilityMenu"),
   sortMetric: document.querySelector("#sortMetric"),
-  sortColumn: document.querySelector("#sortColumn"),
-  sortAscendingButton: document.querySelector("#sortAscendingButton"),
-  sortDescendingButton: document.querySelector("#sortDescendingButton"),
   sortLatestUpdateButton: document.querySelector("#sortLatestUpdateButton"),
   tableViewToggle: document.querySelector("#tableViewToggle"),
+  latestMonthOnlyToggle: document.querySelector("#latestMonthOnlyToggle"),
+  latestMonthOnlyLabel: document.querySelector("#latestMonthOnlyLabel"),
   dashboardContent: document.querySelector("#dashboardContent"),
   dashboardActionsForm: document.querySelector("#dashboardActionsForm"),
   incompleteButton: document.querySelector("#incompleteButton"),
@@ -331,10 +331,60 @@ async function loadDashboard() {
 function renderDashboard() {
   renderMetadata();
   renderIndustryList();
-  renderSortColumnOptions();
+  renderLatestMonthFilterState();
   renderActiveIndustry();
   renderSelectionState();
   elements.appShell.setAttribute("aria-busy", "false");
+}
+
+function validJalaliMonth(value) {
+  const year = Number(value?.year);
+  const month = Number(value?.month);
+  return Number.isInteger(year) && Number.isInteger(month) && month >= 1 && month <= 12
+    ? { year, month }
+    : null;
+}
+
+function previousJalaliMonth(value) {
+  const month = validJalaliMonth(value);
+  if (!month) return null;
+  return month.month === 1
+    ? { year: month.year - 1, month: 12 }
+    : { year: month.year, month: month.month - 1 };
+}
+
+function expectedLatestReportMonth() {
+  const metadata = state.dashboard?.metadata ?? {};
+  const scheduled = validJalaliMonth(metadata.scheduledTargetMonth);
+  if (scheduled) return scheduled;
+
+  const asOfMatch = String(metadata.asOf ?? "").match(/^(\d{4})[/-](\d{1,2})/);
+  if (asOfMatch) {
+    return previousJalaliMonth({ year: Number(asOfMatch[1]), month: Number(asOfMatch[2]) });
+  }
+
+  const execution = validJalaliMonth(metadata.executionMonth);
+  return previousJalaliMonth(execution) ?? validJalaliMonth(metadata.targetMonth);
+}
+
+function companyHasReportForMonth(company, targetMonth) {
+  if (!targetMonth) return false;
+  const reportMonths = (company?.monthlyReports ?? [])
+    .map((report) => validJalaliMonth(report))
+    .filter(Boolean)
+    .sort((left, right) => right.year - left.year || right.month - left.month);
+  const latest = reportMonths[0]
+    ?? validJalaliMonth(company?.effectiveTargetMonth)
+    ?? validJalaliMonth(company?.definitions?.targetMonth);
+  return latest?.year === targetMonth.year && latest?.month === targetMonth.month;
+}
+
+function renderLatestMonthFilterState() {
+  const targetMonth = expectedLatestReportMonth();
+  elements.latestMonthOnlyToggle.checked = state.latestMonthOnly;
+  elements.latestMonthOnlyLabel.textContent = targetMonth
+    ? `فقط دارای گزارش ${formatJalaliMonth(targetMonth)}`
+    : "فقط دارای گزارش آخرین ماه";
 }
 
 function renderMetadata() {
@@ -526,20 +576,24 @@ function renderActiveIndustry() {
         normalizeText(`${company.symbol} ${company.name}`).includes(query)
       ))
     : industryCompanies;
-  const visibleCompanies = sortCompanies(filteredCompanies);
+  const targetMonth = expectedLatestReportMonth();
+  const latestMonthCompanies = state.latestMonthOnly
+    ? filteredCompanies.filter((company) => companyHasReportForMonth(company, targetMonth))
+    : filteredCompanies;
+  const visibleCompanies = sortCompanies(latestMonthCompanies);
 
   elements.activeIndustryTitle.textContent = query
     ? "نتایج جست‌وجو در همه صنایع"
     : showingAll ? "همه نمادها" : industry?.industryName || "صنعت بدون نام";
-  elements.activeIndustryCompanyCount.textContent = query
+  elements.activeIndustryCompanyCount.textContent = query || state.latestMonthOnly
     ? `${faInteger.format(visibleCompanies.length)} نتیجه`
     : `${faInteger.format(industryCompanies.length)} شرکت`;
 
   if (!visibleCompanies.length) {
     elements.dashboardContent.innerHTML = `
       <div class="empty-state">
-        <strong>${query ? "شرکتی با این عبارت پیدا نشد" : "این صنعت هنوز شرکتی ندارد"}</strong>
-        <p>${query ? "نام شرکت یا نماد را با عبارت دیگری جست‌وجو کنید." : "پس از بروزرسانی داده‌ها، شرکت‌های این صنعت نمایش داده می‌شوند."}</p>
+        <strong>${state.latestMonthOnly ? `نمادی با گزارش ${escapeHtml(formatJalaliMonth(targetMonth))} پیدا نشد` : query ? "شرکتی با این عبارت پیدا نشد" : "این صنعت هنوز شرکتی ندارد"}</strong>
+        <p>${state.latestMonthOnly ? "با انتشار و بروزرسانی گزارش ماهانه، نمادها در این فهرست نمایش داده می‌شوند." : query ? "نام شرکت یا نماد را با عبارت دیگری جست‌وجو کنید." : "پس از بروزرسانی داده‌ها، شرکت‌های این صنعت نمایش داده می‌شوند."}</p>
       </div>
     `;
     return;
@@ -563,10 +617,19 @@ function sortCompanies(companies) {
       return comparison || companySymbol(left).localeCompare(companySymbol(right), "fa");
     });
   }
-  if (!state.sortDirection) return [...companies];
+  if (!state.sortColumn || !state.sortDirection) return [...companies];
   return [...companies].sort((left, right) => {
-    const leftValue = finiteNumber(left.growth?.[state.sortColumn]?.[state.sortMetric]);
-    const rightValue = finiteNumber(right.growth?.[state.sortColumn]?.[state.sortMetric]);
+    const periodColumn = PERIOD_COLUMNS.some((column) => column.key === state.sortColumn);
+    const leftValue = finiteNumber(
+      periodColumn
+        ? left.periods?.[state.sortColumn]?.metrics?.[state.sortMetric]
+        : left.growth?.[state.sortColumn]?.[state.sortMetric],
+    );
+    const rightValue = finiteNumber(
+      periodColumn
+        ? right.periods?.[state.sortColumn]?.metrics?.[state.sortMetric]
+        : right.growth?.[state.sortColumn]?.[state.sortMetric],
+    );
     const comparison = globalThis.CodalDashboardSorting.compareNullableNumbers(
       leftValue,
       rightValue,
@@ -581,6 +644,36 @@ function definitionLabel(company, column, isGrowth = false) {
   const container = isGrowth ? definitions.growth : definitions.periods;
   const definition = container?.[isGrowth ? column.key : column.definitionKey];
   return definition?.label || column.fallback;
+}
+
+function sortableColumnHeader(column, label, { growthStart = false } = {}) {
+  const active = !state.sortByUpdatedAt
+    && state.sortColumn === column.key
+    && Boolean(state.sortDirection);
+  const ariaSort = active
+    ? state.sortDirection === "asc" ? "ascending" : "descending"
+    : "none";
+  const indicator = active
+    ? state.sortDirection === "asc" ? "↑" : "↓"
+    : "↕";
+  const metricLabel = METRICS.find((metric) => metric.key === state.sortMetric)?.label ?? "ردیف انتخاب‌شده";
+  return `
+    <th
+      scope="col"
+      class="sortable-column-header${growthStart ? " growth-start" : ""}${active ? " sort-active" : ""}"
+      aria-sort="${ariaSort}"
+    >
+      <button
+        class="sort-column-button"
+        type="button"
+        data-sort-column="${escapeHtml(column.key)}"
+        title="مرتب‌سازی ${escapeHtml(metricLabel)} براساس ${escapeHtml(label)}"
+      >
+        <span>${escapeHtml(label)}</span>
+        <span class="sort-column-indicator" aria-hidden="true">${indicator}</span>
+      </button>
+    </th>
+  `;
 }
 
 function statusTone(status) {
@@ -652,8 +745,8 @@ function renderUnifiedTable(companies) {
   const displayedMetrics = visibleMetrics();
   const sample = companies[0];
   const headers = [
-    ...PERIOD_COLUMNS.map((column) => definitionLabel(sample, column)),
-    ...GROWTH_COLUMNS.map((column) => definitionLabel(sample, column, true)),
+    ...PERIOD_COLUMNS.map((column) => ({ column, label: definitionLabel(sample, column) })),
+    ...GROWTH_COLUMNS.map((column) => ({ column, label: definitionLabel(sample, column, true) })),
   ];
   const body = companies.map((company) => {
     const symbol = companySymbol(company);
@@ -684,6 +777,7 @@ function renderUnifiedTable(companies) {
                     ${codalSymbolLink(symbol)}
                   </span>
                   <small title="${escapeHtml(company.name || "")}">${escapeHtml(company.name || "نام شرکت ثبت نشده")}</small>
+                  <span class="unified-fiscal-year">${escapeHtml(fiscalEndLabel(company.fiscalYearEndMonth))}</span>
                 </span>
                 <span class="badge status-${tone}">${escapeHtml(status)}</span>
                 ${unitMismatch ? '<span class="badge badge-unit-mismatch">عدم تطابق واحد</span>' : ""}
@@ -709,7 +803,9 @@ function renderUnifiedTable(companies) {
           <tr>
             <th class="unified-company-column" scope="col">نماد و شرکت</th>
             <th class="metric-column unified-metric-column" scope="col">شاخص</th>
-            ${headers.map((label, index) => `<th scope="col" class="${index === PERIOD_COLUMNS.length ? "growth-start" : ""}">${escapeHtml(label)}</th>`).join("")}
+            ${headers.map(({ column, label }, index) => sortableColumnHeader(column, label, {
+              growthStart: index === PERIOD_COLUMNS.length,
+            })).join("")}
           </tr>
         </thead>
         <tbody>${body}</tbody>
@@ -733,8 +829,8 @@ function renderCompanyCard(company) {
   const unitMismatch = hasUnitMismatch(company);
 
   const headers = [
-    ...PERIOD_COLUMNS.map((column) => definitionLabel(company, column)),
-    ...GROWTH_COLUMNS.map((column) => definitionLabel(company, column, true)),
+    ...PERIOD_COLUMNS.map((column) => ({ column, label: definitionLabel(company, column) })),
+    ...GROWTH_COLUMNS.map((column) => ({ column, label: definitionLabel(company, column, true) })),
   ];
 
   const rows = visibleMetrics().map((metric) => {
@@ -804,7 +900,9 @@ function renderCompanyCard(company) {
               <thead>
                 <tr>
                   <th class="metric-column" scope="col">شاخص</th>
-                  ${headers.map((label, index) => `<th scope="col" class="${index === PERIOD_COLUMNS.length ? "growth-start" : ""}">${escapeHtml(label)}</th>`).join("")}
+                  ${headers.map(({ column, label }, index) => sortableColumnHeader(column, label, {
+                    growthStart: index === PERIOD_COLUMNS.length,
+                  })).join("")}
                 </tr>
               </thead>
               <tbody>${rows}</tbody>
@@ -1151,6 +1249,11 @@ elements.dashboardContent.addEventListener("click", (event) => {
     loadDashboard();
     return;
   }
+  const sortColumnButton = event.target.closest("[data-sort-column]");
+  if (sortColumnButton) {
+    toggleColumnSort(sortColumnButton.dataset.sortColumn);
+    return;
+  }
   const checkbox = event.target.closest("[data-company-checkbox]");
   if (checkbox) {
     toggleCompany(checkbox.dataset.companyCheckbox, checkbox.checked);
@@ -1180,15 +1283,6 @@ function renderMetricVisibilityState() {
   });
 }
 
-function renderSortColumnOptions() {
-  const sample = allCompanies()[0];
-  for (const column of GROWTH_COLUMNS) {
-    const option = elements.sortColumn.querySelector(`option[value="${column.key}"]`);
-    if (option) option.textContent = definitionLabel(sample, column, true);
-  }
-  elements.sortColumn.value = state.sortColumn;
-}
-
 elements.metricVisibilityMenu.addEventListener("change", (event) => {
   const checkbox = event.target.closest("[data-metric-visibility]");
   if (!checkbox) return;
@@ -1208,46 +1302,39 @@ elements.metricVisibilityMenu.addEventListener("change", (event) => {
 elements.sortMetric.addEventListener("change", () => {
   state.sortMetric = elements.sortMetric.value;
   setSortByUpdatedAt(false);
-  setSortDirection(null);
+  state.sortColumn = null;
+  state.sortDirection = null;
   renderActiveIndustry();
 });
-
-elements.sortColumn.addEventListener("change", () => {
-  state.sortColumn = elements.sortColumn.value;
-  setSortByUpdatedAt(false);
-  setSortDirection(null);
-  renderActiveIndustry();
-});
-
-function setSortDirection(direction) {
-  state.sortDirection = direction;
-  if (direction) state.sortByUpdatedAt = false;
-  elements.sortAscendingButton.classList.toggle("active", state.sortDirection === "asc");
-  elements.sortDescendingButton.classList.toggle("active", state.sortDirection === "desc");
-  elements.sortAscendingButton.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
-  elements.sortDescendingButton.setAttribute("aria-pressed", String(state.sortDirection === "desc"));
-  elements.sortLatestUpdateButton.classList.toggle("active", state.sortByUpdatedAt);
-  elements.sortLatestUpdateButton.setAttribute("aria-pressed", String(state.sortByUpdatedAt));
-}
 
 function setSortByUpdatedAt(active) {
   state.sortByUpdatedAt = active;
-  if (active) state.sortDirection = null;
+  if (active) {
+    state.sortColumn = null;
+    state.sortDirection = null;
+  }
   elements.sortLatestUpdateButton.classList.toggle("active", state.sortByUpdatedAt);
   elements.sortLatestUpdateButton.setAttribute("aria-pressed", String(state.sortByUpdatedAt));
-  elements.sortAscendingButton.classList.toggle("active", state.sortDirection === "asc");
-  elements.sortDescendingButton.classList.toggle("active", state.sortDirection === "desc");
-  elements.sortAscendingButton.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
-  elements.sortDescendingButton.setAttribute("aria-pressed", String(state.sortDirection === "desc"));
 }
 
-function toggleSortDirection(direction) {
-  setSortDirection(state.sortDirection === direction ? null : direction);
+function toggleColumnSort(columnKey) {
+  const validColumn = [...PERIOD_COLUMNS, ...GROWTH_COLUMNS]
+    .some((column) => column.key === columnKey);
+  if (!validColumn) return;
+
+  setSortByUpdatedAt(false);
+  if (state.sortColumn !== columnKey || !state.sortDirection) {
+    state.sortColumn = columnKey;
+    state.sortDirection = "asc";
+  } else if (state.sortDirection === "asc") {
+    state.sortDirection = "desc";
+  } else {
+    state.sortColumn = null;
+    state.sortDirection = null;
+  }
   renderActiveIndustry();
 }
 
-elements.sortAscendingButton.addEventListener("click", () => toggleSortDirection("asc"));
-elements.sortDescendingButton.addEventListener("click", () => toggleSortDirection("desc"));
 elements.sortLatestUpdateButton.addEventListener("click", () => {
   setSortByUpdatedAt(!state.sortByUpdatedAt);
   renderActiveIndustry();
@@ -1255,6 +1342,11 @@ elements.sortLatestUpdateButton.addEventListener("click", () => {
 
 elements.tableViewToggle.addEventListener("change", () => {
   state.tableView = elements.tableViewToggle.checked;
+  renderActiveIndustry();
+});
+
+elements.latestMonthOnlyToggle.addEventListener("change", () => {
+  state.latestMonthOnly = elements.latestMonthOnlyToggle.checked;
   renderActiveIndustry();
 });
 

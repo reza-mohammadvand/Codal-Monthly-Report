@@ -704,7 +704,7 @@ input[type="checkbox"] {
 }
 
 .sort-basis-fields .select-control {
-  flex: 1 1 0;
+  flex: 0 1 220px;
   min-width: 0;
 }
 
@@ -733,6 +733,51 @@ input[type="checkbox"] {
 
 .select-control select:focus {
   border-color: rgba(64, 217, 200, 0.36);
+}
+
+.sort-column-hint {
+  flex: 1 1 auto;
+  margin: 0 4px 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.latest-update-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 13px;
+  color: var(--muted);
+  background: rgba(13, 27, 45, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.latest-update-sort:hover,
+.latest-update-sort:focus-visible {
+  color: var(--text);
+  border-color: rgba(64, 217, 200, 0.32);
+}
+
+.latest-update-sort.active {
+  color: #07161b;
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.view-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .sort-direction-control {
@@ -1235,6 +1280,49 @@ input[type="checkbox"] {
   line-height: 1.6;
 }
 
+.metrics-table thead .sortable-column-header {
+  padding: 0;
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.metrics-table thead .sortable-column-header.sort-active {
+  background: #113144;
+  box-shadow: inset 0 -2px 0 var(--cyan);
+}
+
+.sort-column-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 7px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+}
+
+.sort-column-button:hover,
+.sort-column-button:focus-visible {
+  color: var(--cyan);
+  background: rgba(64, 217, 200, 0.055);
+  outline: 0;
+}
+
+.sort-column-indicator {
+  flex: 0 0 auto;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.sort-active .sort-column-indicator {
+  color: var(--cyan);
+}
+
 .metrics-table .metric-column {
   position: sticky;
   right: 0;
@@ -1292,6 +1380,11 @@ input[type="checkbox"] {
   font-size: 8px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.unified-table .sort-column-button {
+  min-height: 54px;
+  padding: 6px 4px;
 }
 
 .unified-table .unified-company-column {
@@ -1355,6 +1448,16 @@ input[type="checkbox"] {
   overflow: hidden;
   color: var(--muted);
   font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unified-company-identity .unified-fiscal-year {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--subtle);
+  font-size: 8px;
+  line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1900,7 +2003,15 @@ input[type="checkbox"] {
 
   .sort-basis-fields {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sort-basis-fields .select-control {
+    width: 100%;
+  }
+
+  .sort-column-hint {
+    margin: 0 2px 4px;
   }
 
   .sort-direction-buttons button {
@@ -1912,6 +2023,17 @@ input[type="checkbox"] {
   .metric-visibility,
   .search-field {
     grid-column: 1 / -1;
+  }
+
+  .latest-update-sort,
+  .view-filter-controls {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .view-filter-controls {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .metric-visibility summary {

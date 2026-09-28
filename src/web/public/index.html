@@ -19,9 +19,9 @@
     <meta name="twitter:image" content="/og.png">
     <link rel="icon" type="image/png" href="/og.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
-    <link rel="stylesheet" href="/styles.css?v=15">
+    <link rel="stylesheet" href="/styles.css?v=17">
     <script src="/sorting.js?v=1" defer></script>
-    <script src="/app.js?v=31" defer></script>
+    <script src="/app.js?v=33" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
@@ -225,37 +225,23 @@
                         <option value="dominantRate">نرخ فروش کل</option>
                       </select>
                     </label>
-                    <label class="select-control" for="sortColumn">
-                      <span>ستون رشد</span>
-                      <select id="sortColumn" aria-label="ستون رشد مبنای مرتب‌سازی">
-                        <option value="targetYoY" selected>رشد ماه مبنا نسبت به سال قبل</option>
-                        <option value="ytdYoY">رشد میانگین دوره مالی</option>
-                        <option value="targetMoM">رشد ماه مبنا نسبت به ماه قبل</option>
-                      </select>
-                    </label>
                   </div>
                 </fieldset>
                 <div class="toolbar-sort-actions">
-                  <div class="sort-direction-control" role="group" aria-label="روش و جهت مرتب‌سازی">
-                    <div class="sort-direction-buttons">
-                      <button id="sortAscendingButton" type="button" aria-pressed="false">
-                        <span aria-hidden="true">↑</span>
-                        صعودی
-                      </button>
-                      <button id="sortDescendingButton" type="button" aria-pressed="false">
-                        <span aria-hidden="true">↓</span>
-                        نزولی
-                      </button>
-                      <button id="sortLatestUpdateButton" type="button" aria-pressed="false">
-                        <span aria-hidden="true">◷</span>
-                        تازه‌ترین بروزرسانی
-                      </button>
-                    </div>
+                  <button id="sortLatestUpdateButton" class="latest-update-sort" type="button" aria-pressed="false">
+                    <span aria-hidden="true">◷</span>
+                    تازه‌ترین بروزرسانی
+                  </button>
+                  <div class="view-filter-controls">
+                    <label class="table-view-control" for="tableViewToggle">
+                      <input id="tableViewToggle" type="checkbox">
+                      <span>نمایش یکپارچه جدولی</span>
+                    </label>
+                    <label class="table-view-control" for="latestMonthOnlyToggle">
+                      <input id="latestMonthOnlyToggle" type="checkbox">
+                      <span id="latestMonthOnlyLabel">فقط دارای گزارش آخرین ماه</span>
+                    </label>
                   </div>
-                  <label class="table-view-control" for="tableViewToggle">
-                    <input id="tableViewToggle" type="checkbox">
-                    <span>نمایش یکپارچه جدولی</span>
-                  </label>
                 </div>
               </div>
             </div>
