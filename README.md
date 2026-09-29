@@ -2,7 +2,7 @@
 
 Generate a multi-sheet Excel workbook from the public monthly activity reports
 published on [Codal](https://www.codal.ir/). The project covers manufacturing
-companies listed on the Tehran Stock Exchange and Iran Fara Bourse, groups them
+and agricultural companies listed on the Tehran Stock Exchange and Iran Fara Bourse, groups them
 by industry, and creates a four-row company-total block for every symbol.
 
 ## Features
@@ -15,14 +15,14 @@ by industry, and creates a four-row company-total block for every symbol.
   database, with industry and symbol selection controls.
 - Performs a full extraction when the database is empty. Later web-wide updates
   scan one user-defined recent publication window and process only matching
-  manufacturing symbols.
+  supported production and agricultural symbols.
 - Processes companies sequentially and pauses for 10 seconds after each company
   by default to respect Codal's rate limits.
 - Checkpoints each completed or changed company in SQLite immediately.
 - Exports only the selected symbols to the same multi-sheet Excel format used
   by the command-line report.
-- Includes only manufacturing issuers (`RT=1000000`) with TSE or IFB status
-  (`st=0` or `st=1`).
+- Includes manufacturing issuers (`RT=1000000`) and agricultural monthly-activity
+  issuers (`RT=1000008`) with TSE or IFB status (`st=0` or `st=1`).
 - Automatically prefers the latest disclosure or correction for each month,
   but falls back to an earlier valid filing if the newest attachment is broken.
 - Creates one right-to-left worksheet per industry.
@@ -110,8 +110,8 @@ control both **Update selected** and **Excel export**. For a database that alrea
 contains data, enter a lookback period (1–365 days) and use **Update recent
 reports**. The application makes one paginated Codal search for monthly filings
 published in that window, intersects the results with Codal's current active
-manufacturing-company catalog, and processes only those symbols. A newly listed
-manufacturing issuer is therefore added when it has a monthly filing inside the
+supported-company catalog, and processes only those symbols. A newly listed
+manufacturing or agricultural issuer is therefore added when it has a monthly filing inside the
 selected window. **Update selected** continues to check only the chosen symbols.
 The first sidebar option displays every stored symbol across all industries.
 Dashboard controls can sort companies by any of the four metrics and any of the
@@ -125,7 +125,7 @@ saved immediately so a later failure cannot discard earlier results.
 Updates are incremental. The recent-window scan compares tracing numbers from
 its global result with stored tracing numbers, so an already processed filing
 does not trigger another report download. New filings and corrections for
-manufacturing symbols are extracted and persisted; non-manufacturing results
+supported manufacturing and agricultural symbols are extracted and persisted; other results
 are ignored. **Update selected** applies the per-symbol new-filing check to the
 chosen symbols. A technical failure never replaces an already valid stored
 report.
@@ -172,7 +172,7 @@ Run the same pilot with an explicit output filename under `outputs/`:
 npm run sample
 ```
 
-Run the report for every eligible manufacturing company:
+Run the report for every eligible manufacturing or agricultural company:
 
 ```powershell
 npm start -- --all-symbols
@@ -196,7 +196,7 @@ npm start -- --help
 | --- | --- |
 | `--as-of=YYYY/MM/DD` | Jalali execution date. The target report month is one month earlier. |
 | `--symbols=SYM1,SYM2` | Replace the default pilot list with specific Codal symbols. |
-| `--all-symbols` | Process every eligible active manufacturing issuer instead of the pilot. |
+| `--all-symbols` | Process every eligible active manufacturing or agricultural issuer instead of the pilot. |
 | `--limit=10` | Limit the number of companies for testing. |
 | `--output=PATH` | Set the destination `.xlsx` path. |
 | `--cache-dir=PATH` | Set the download cache directory. Default: `.cache/codal`. |

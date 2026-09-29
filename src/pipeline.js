@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import {
+  AGRICULTURE_REPORTING_TYPE,
   CodalClient,
   compareReportPriority,
   extractJalaliDate,
@@ -25,6 +26,8 @@ const METRIC_MAP = Object.freeze({
   dominantRevenue: "dominantProductRevenue",
   dominantRate: "dominantProductRate",
 });
+
+const AGRICULTURE_INDUSTRY_ID = 12;
 
 export const CALCULATION_VERSION = "company-totals-v3";
 
@@ -316,12 +319,16 @@ async function runPool(items, concurrency, worker) {
 }
 
 function companyFields(company) {
+  const reportingType = Number(company.RT ?? company.ReportingType ?? company.reportingType);
+  const sourceIndustryId = Number(company.IG ?? company.IndustryGroup ?? company.industryId);
   return {
     symbol: company.sy ?? company.Symbol ?? company.symbol,
     name: company.n ?? company.CompanyName ?? company.name,
-    industryId: Number(company.IG ?? company.IndustryGroup ?? company.industryId),
+    industryId: reportingType === AGRICULTURE_REPORTING_TYPE
+      ? AGRICULTURE_INDUSTRY_ID
+      : sourceIndustryId,
     state: Number(company.st ?? company.CompanyState ?? company.state),
-    reportingType: Number(company.RT ?? company.ReportingType ?? company.reportingType),
+    reportingType,
   };
 }
 

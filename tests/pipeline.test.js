@@ -62,6 +62,7 @@ const rawCompanies = [
   company("کگل"),
   company("فولاد", 0, { n: "رکورد تکراری فولاد" }),
   company("نمادغیرفعال", 2),
+  company("زشگزا", 1, { IG: 1, RT: 1_000_008 }),
 ];
 
 test("default company selection is the ordered four-symbol pilot", () => {
@@ -84,8 +85,9 @@ test("--symbols fully overrides the pilot and preserves requested order", () => 
 test("--all-symbols keeps every eligible active company and still deduplicates", () => {
   const selected = selectCompanies(rawCompanies, { allSymbols: true });
 
-  assert.deepEqual(selected.map((item) => item.symbol), ["غپاک", "شپنا", "فولاد", "فملی", "کگل"]);
+  assert.deepEqual(selected.map((item) => item.symbol), ["غپاک", "شپنا", "فولاد", "فملی", "کگل", "زشگزا"]);
   assert.equal(selected.some((item) => item.symbol === "نمادغیرفعال"), false);
+  assert.equal(selected.find((item) => item.symbol === "زشگزا").industryId, 12);
 });
 
 test("--limit is applied after symbol selection", () => {

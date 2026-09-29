@@ -5,6 +5,11 @@ export const CODAL_SEARCH_BASE_URL = 'https://search.codal.ir';
 export const CODAL_EXCEL_BASE_URL = 'https://excel.codal.ir';
 export const CODAL_BASE_URL = 'https://www.codal.ir';
 export const PRODUCTION_REPORTING_TYPE = 1_000_000;
+export const AGRICULTURE_REPORTING_TYPE = 1_000_008;
+export const MONTHLY_ACTIVITY_REPORTING_TYPES = Object.freeze([
+  PRODUCTION_REPORTING_TYPE,
+  AGRICULTURE_REPORTING_TYPE,
+]);
 
 const DEFAULT_HEADERS = Object.freeze({
   Accept: 'application/json, text/html;q=0.9, */*;q=0.8',
@@ -952,7 +957,11 @@ export class CodalClient {
   }
 
   async fetchProductionCompanies() {
-    return this.fetchCompanies({ reportingType: PRODUCTION_REPORTING_TYPE });
+    const companies = await this.fetchCompanies();
+    const supportedTypes = new Set(MONTHLY_ACTIVITY_REPORTING_TYPES);
+    return companies.filter((company) => supportedTypes.has(Number(
+      company.RT ?? company.ReportingType ?? company.reportingType,
+    )));
   }
 
   async fetchIndustries() {

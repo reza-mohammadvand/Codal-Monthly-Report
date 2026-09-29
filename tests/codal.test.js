@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  AGRICULTURE_REPORTING_TYPE,
   CodalClient,
   PRODUCTION_REPORTING_TYPE,
   extractCodalDatasource,
@@ -303,7 +304,11 @@ test('CodalClient supports injected transports, production filtering and paginat
     fetchJson: async (url) => {
       requested.push(url);
       if (url.endsWith('/companies')) {
-        return [{ sy: 'فولاد', RT: PRODUCTION_REPORTING_TYPE }, { sy: 'وبملت', RT: 1_000_001 }];
+        return [
+          { sy: 'فولاد', RT: PRODUCTION_REPORTING_TYPE },
+          { sy: 'زشگزا', RT: AGRICULTURE_REPORTING_TYPE },
+          { sy: 'وبملت', RT: 1_000_001 },
+        ];
       }
       if (url.endsWith('/IndustryGroup')) return [{ Id: 27, Name: 'فلزات اساسی' }];
       const page = new URL(url).searchParams.get('PageNumber');
@@ -312,7 +317,10 @@ test('CodalClient supports injected transports, production filtering and paginat
     retries: 0,
   });
 
-  assert.deepEqual((await client.fetchProductionCompanies()).map((company) => company.sy), ['فولاد']);
+  assert.deepEqual(
+    (await client.fetchProductionCompanies()).map((company) => company.sy),
+    ['فولاد', 'زشگزا'],
+  );
   assert.equal((await client.fetchIndustries())[0].Id, 27);
   const letters = await client.searchMonthlyReports({ symbol: 'فولاد', fromDate: '1404/01/01' });
   assert.deepEqual(letters.map((letter) => letter.TracingNo), [1, 2]);
