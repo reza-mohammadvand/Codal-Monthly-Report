@@ -264,17 +264,25 @@ function renderDatasourceRows(cells, tagName) {
     .join('');
 }
 
-function renderDatasourceTables(datasource) {
-  const tables = (datasource?.sheets ?? []).flatMap((sheet) => sheet?.tables ?? []);
-  return tables.map((table) => {
-    const cells = Array.isArray(table?.cells) ? table.cells : [];
-    const headerCells = cells.filter((cell) => /header/i.test(String(cell?.cellGroupName ?? '')));
-    const bodyCells = cells.filter((cell) => !/header/i.test(String(cell?.cellGroupName ?? '')));
-    return `<section><h2>${escapeHtml(table?.title_Fa ?? table?.title_En ?? table?.aliasName)}</h2>`
-      + `<p>${escapeHtml(table?.description)}</p><table data-alias="${escapeHtml(table?.aliasName)}">`
-      + `<thead>${renderDatasourceRows(headerCells, 'th')}</thead>`
-      + `<tbody>${renderDatasourceRows(bodyCells, 'td')}</tbody></table></section>`;
-  }).join('');
+function renderProductionSalesDatasourceTable(datasource) {
+  const table = (datasource?.sheets ?? [])
+    .flatMap((sheet) => sheet?.tables ?? [])
+    .find((candidate) => {
+      const identity = normalizeCodalText([
+        candidate?.title_Fa,
+        candidate?.title_En,
+        candidate?.aliasName,
+      ].filter(Boolean).join(' '));
+      return /تولید\s*و\s*فروش|production\s*and\s*sales/i.test(identity);
+    });
+  if (!table) return '';
+  const cells = Array.isArray(table?.cells) ? table.cells : [];
+  const headerCells = cells.filter((cell) => /header/i.test(String(cell?.cellGroupName ?? '')));
+  const bodyCells = cells.filter((cell) => !/header/i.test(String(cell?.cellGroupName ?? '')));
+  return `<section><h2>${escapeHtml(table?.title_Fa ?? table?.title_En ?? table?.aliasName)}</h2>`
+    + `<p>${escapeHtml(table?.description)}</p><table data-alias="${escapeHtml(table?.aliasName)}">`
+    + `<thead>${renderDatasourceRows(headerCells, 'th')}</thead>`
+    + `<tbody>${renderDatasourceRows(bodyCells, 'td')}</tbody></table></section>`;
 }
 
 function pad2(number) {
@@ -588,6 +596,8 @@ function extractPeriodEntries(table, columns, set) {
       revenue: parseCodalNumber(row[set.columns.revenue]),
     };
     const hasMetric = Object.values(metrics).some((value) => value != null);
+    const hasOperatingValue = [metrics.production, metrics.salesQuantity, metrics.revenue]
+      .some((value) => value != null && value !== 0);
     if (detectedSection) {
       section = detectedSection;
       // Most section labels are empty headings. Codal also uses rows such as
@@ -596,7 +606,10 @@ function extractPeriodEntries(table, columns, set) {
       // can never be mistaken for the period's dominant product.
       if (!hasMetric || !['returns', 'discounts'].includes(detectedSection)) continue;
     }
-    if (!hasMetric || isTotalRow(name)) continue;
+    // Zero-only informational rows (for example investment-income disclosures
+    // expressed in million rials) do not contribute to production or sales and
+    // must not create a false quantity-unit mismatch.
+    if (!hasMetric || !hasOperatingValue || isTotalRow(name)) continue;
     entries.push({
       name,
       key: productKey(name),
@@ -725,13 +738,16 @@ function parsePeriod(table, columns, set, revenueMultiplier) {
  */
 export function parseProductionSalesReport(html) {
   const datasource = extractCodalDatasource(html);
-  const embeddedTables = datasource ? parseHtmlTables(renderDatasourceTables(datasource)) : [];
-  const tables = [...parseHtmlTables(html), ...embeddedTables];
-  const ranked = tables
-    .map((table) => ({ table, score: tableScore(table) }))
-    .sort((left, right) => right.score - left.score);
-  const table = ranked[0]?.score >= 10 ? ranked[0].table : null;
-  if (!table) {
+  // Select Codal's explicitly named production/sales statement. Datasource
+  // order is not reliable (for example, raw-material purchases can be index 0),
+  // and Excel "GetAll" output can combine unrelated activity rows.
+  const embeddedTable = datasource
+    ? parseHtmlTables(renderProductionSalesDatasourceTable(datasource))[0] ?? null
+    : null;
+  const productionSalesTable = embeddedTable
+    ?? parseHtmlTables(html).find((table) => tableScore(table) >= 10)
+    ?? null;
+  if (!productionSalesTable) {
     return {
       tableFound: false,
       monthly: null,
@@ -742,13 +758,15 @@ export function parseProductionSalesReport(html) {
     };
   }
 
-  const columns = describeColumns(table);
+  const columns = describeColumns(productionSalesTable);
   const availablePeriodSets = buildPeriodColumnSets(columns);
   const selected = selectPeriodSets(availablePeriodSets);
-  const revenueMultiplier = detectRevenueMultiplier(`${table.context} ${table.headerRows.flat().join(' ')}`);
-  const monthly = parsePeriod(table, columns, selected.monthly, revenueMultiplier);
-  const cumulativeCurrent = parsePeriod(table, columns, selected.cumulativeCurrent, revenueMultiplier);
-  const cumulativePriorYear = parsePeriod(table, columns, selected.cumulativePriorYear, revenueMultiplier);
+  const revenueMultiplier = detectRevenueMultiplier(
+    `${productionSalesTable.context} ${productionSalesTable.headerRows.flat().join(' ')}`,
+  );
+  const monthly = parsePeriod(productionSalesTable, columns, selected.monthly, revenueMultiplier);
+  const cumulativeCurrent = parsePeriod(productionSalesTable, columns, selected.cumulativeCurrent, revenueMultiplier);
+  const cumulativePriorYear = parsePeriod(productionSalesTable, columns, selected.cumulativePriorYear, revenueMultiplier);
   const warnings = [];
   if (!monthly) warnings.push('Monthly period columns were not found.');
   if (monthly && !monthly.totals.compatibleUnits) {
@@ -1032,8 +1050,8 @@ export class CodalClient {
     }
 
     const candidates = [
-      reportOrUrl?.ExcelUrl ?? reportOrUrl?.excelUrl,
       reportOrUrl?.Url ?? reportOrUrl?.url,
+      reportOrUrl?.ExcelUrl ?? reportOrUrl?.excelUrl,
     ].filter(Boolean);
     let lastParsed = null;
     let lastError = null;

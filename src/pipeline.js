@@ -29,7 +29,7 @@ const METRIC_MAP = Object.freeze({
 
 const AGRICULTURE_INDUSTRY_ID = 12;
 
-export const CALCULATION_VERSION = "company-totals-v3";
+export const CALCULATION_VERSION = "company-totals-v6-production-table";
 
 export const DEFAULT_PILOT_SYMBOLS = Object.freeze(["فولاد", "فملی", "شپنا", "کگل"]);
 

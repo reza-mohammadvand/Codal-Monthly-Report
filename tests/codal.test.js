@@ -86,6 +86,18 @@ test('production parser detects monthly/YTD periods and aggregates repeated prod
   assert.match(parsed.warnings.join(' '), /without unit conversion/);
 });
 
+test('production parser reads only the first production/sales statement table', () => {
+  const firstTable = productionSalesHtml.replace('تولید و فروش', 'گزارش فعالیت ماهانه');
+  const laterTable = productionSalesHtml
+    .replaceAll('محصول الف', 'محصول جدول دوم')
+    .replaceAll('محصول ب', 'محصول دوم جدول دوم');
+  const parsed = parseProductionSalesReport(`${firstTable}${laterTable}`);
+
+  assert.equal(parsed.tableFound, true);
+  assert.equal(parsed.monthly.products[0].name, 'محصول الف');
+  assert.equal(parsed.monthly.products.some((product) => /جدول دوم/.test(product.name)), false);
+});
+
 test('production parser recovers tables from Codal embedded datasource pages', async () => {
   const sourceTable = parseHtmlTables(productionSalesHtml)[0];
   const cells = [
@@ -112,6 +124,16 @@ test('production parser recovers tables from Codal embedded datasource pages', a
     yearEndToDate: '1405/12/29',
     sheets: [{
       tables: [{
+        title_Fa: 'خرید مواد اولیه',
+        aliasName: 'BuyRawMaterial',
+        cells: [{
+          rowSequence: 1,
+          columnSequence: 1,
+          cellGroupName: 'Header',
+          isVisible: true,
+          value: 'مبلغ خرید',
+        }],
+      }, {
         title_Fa: 'تولید و فروش',
         description: 'کلیه مبالغ به میلیون ریال است',
         aliasName: 'ProductionAndSales',
@@ -140,7 +162,6 @@ test('production parser recovers tables from Codal embedded datasource pages', a
   });
   assert.equal(recovered.monthly.date.value, '1405/05/31');
   assert.deepEqual(requests, [
-    'https://excel.codal.ir/empty',
     'https://www.codal.ir/Reports/Decision.aspx?id=1',
   ]);
 });
@@ -156,6 +177,21 @@ test('company totals produce a weighted sales rate when units are compatible', (
   assert.equal(monthly.totals.revenue, 420);
   assert.equal(monthly.totals.rate, 420_000_000 / 30);
   assert.equal(monthly.totals.weightedRate, 420_000_000 / 30);
+});
+
+test('zero-only informational rows do not create a unit mismatch', () => {
+  const compatibleHtml = productionSalesHtml
+    .replace(/<tr><td>محصول ناسازگار[\s\S]*?<\/tr>/, '')
+    .replace(
+      '</tbody>',
+      '<tr><td>درآمد سرمایه گذاری در شرکت های فرعی</td><td>میلیون ریال</td>'
+        + '<td>۰</td>'.repeat(12) + '</tr></tbody>',
+    );
+  const monthly = parseProductionSalesReport(compatibleHtml).monthly;
+
+  assert.equal(monthly.products.some((product) => /درآمد سرمایه گذاری/.test(product.name)), false);
+  assert.deepEqual(monthly.totals.units, ['تن']);
+  assert.equal(monthly.totals.unitsCompatible, true);
 });
 
 test('all-zero product revenue preserves explicit zero company totals', () => {
