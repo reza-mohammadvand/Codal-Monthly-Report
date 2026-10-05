@@ -71,7 +71,7 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /showToast\(message, "busy", \{ persistent: true \}\)/);
   assert.doesNotMatch(html, /id="(?:exportButton|updateSelectedButton)"[^>]*\sdisabled(?:\s|>)/);
   assert.match(html, /sorting\.js\?v=1" defer/);
-  assert.match(html, /app\.js\?v=30" defer/);
+  assert.match(html, /app\.js\?v=40" defer/);
   assert.match(html, /id="dashboardActionsForm"/);
   assert.match(html, /formaction="\/actions\/export"/);
   assert.match(html, /formaction="\/actions\/update\?scope=selected"/);
@@ -104,22 +104,19 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(html, /<legend>مرتب کردن براساس:<\/legend>/);
   assert.match(html, /class="sort-basis-fields"/);
   assert.match(html, /id="sortMetric"/);
-  assert.match(html, /id="sortColumn"/);
-  assert.equal((html.match(/<option value="(?:targetYoY|ytdYoY|targetMoM)"/g) ?? []).length, 3);
   assert.match(html, /id="metricVisibilityMenu"/);
   assert.doesNotMatch(html, /metricVisibilitySummary/);
   assert.equal((html.match(/data-metric-visibility=/g) ?? []).length, 4);
-  assert.match(html, /id="sortAscendingButton"/);
-  assert.match(html, /id="sortDescendingButton"/);
   assert.match(html, /aria-pressed="false"/);
   assert.match(html, /id="tableViewToggle"/);
   assert.match(app, /function sortCompanies\(companies\)/);
-  assert.match(app, /if \(!state\.sortDirection\) return \[\.\.\.companies\]/);
+  assert.match(app, /if \(!state\.sortColumn \|\| !state\.sortDirection\) return \[\.\.\.companies\]/);
   assert.match(app, /left\.growth\?\.\[state\.sortColumn\]\?\.\[state\.sortMetric\]/);
   assert.match(app, /CodalDashboardSorting\.compareNullableNumbers/);
-  assert.match(app, /setSortDirection\(null\)/);
-  assert.match(app, /function renderSortColumnOptions\(\)/);
-  assert.match(app, /function toggleSortDirection\(direction\)/);
+  assert.match(app, /function toggleColumnSort\(columnKey\)/);
+  assert.match(app, /state\.sortDirection = "asc"/);
+  assert.match(app, /state\.sortDirection = "desc"/);
+  assert.match(app, /data-sort-column=/);
   assert.match(app, /faDecimal = new Intl\.NumberFormat\("fa-IR", \{ maximumFractionDigits: 0 \}\)/);
   assert.match(app, /minimumFractionDigits: 0,[\s\S]*maximumFractionDigits: 0,/);
   assert.match(app, /function renderUnifiedTable\(companies\)/);
@@ -132,6 +129,48 @@ test("selecting companies immediately enables selected update and Excel export",
   assert.match(app, /function renderMetricVisibilityState\(\)/);
   assert.doesNotMatch(html, /type="module"/);
   assert.doesNotMatch(html, /runtime-badge|نسخه ۱۵: رابط آماده/);
+});
+
+test("industry brochures download every symbol in one dynamic image without a modal preview", async () => {
+  const [app, html, css] = await Promise.all([
+    fs.readFile(APP_FILE, "utf8"),
+    fs.readFile(INDEX_FILE, "utf8"),
+    fs.readFile(CSS_FILE, "utf8"),
+  ]);
+  assert.match(html, /id="brochureButton"/);
+  assert.match(html, /id="brochureDialog"/);
+  assert.match(html, /id="brochureIndustrySearch"/);
+  assert.doesNotMatch(html, /id="brochureCanvas"|brochure-preview-panel|brochure-pagination/);
+  assert.match(html, /id="brochureSelectionTitle"/);
+  assert.match(html, /id="brochureSelectionMeta"/);
+  assert.match(html, /id="brochureDownloadButton"/);
+  assert.match(html, /<link rel="preload" as="image" href="\/Logo\.png">/);
+  assert.match(html, /<svg class="brochure-close-icon"[^>]*>[\s\S]*<path d="M6 6l12 12M18 6L6 18"><\/path>/);
+  assert.doesNotMatch(app, /BROCHURE_ROWS_PER_PAGE|brochurePage|pageCount/);
+  assert.match(app, /const BROCHURE_MIN_CANVAS_HEIGHT = 1800/);
+  assert.match(app, /function brochureCanvasHeight\(rowCount\)/);
+  assert.match(app, /canvas\.height = brochureCanvasHeight\(model\.rows\.length\)/);
+  assert.match(app, /function brochureReportState\(company, expectedMonth\)/);
+  assert.doesNotMatch(app, /const companies = allCompanies\s*\.filter\(\(company\) => companyHasReportForMonth/);
+  assert.match(app, /report: brochureReportState\(company, expectedMonth\)/);
+  assert.match(app, /function drawBrochureStatus\(context, row, column, centerY\)/);
+  assert.match(app, /function drawBrochureImage\(canvas, model\)/);
+  assert.match(app, /const imageRows = model\.rows/);
+  assert.match(app, /const BROCHURE_LOGO_URL = "\/Logo\.png"/);
+  assert.match(app, /function loadBrochureLogo\(\)/);
+  assert.match(app, /context\.drawImage\(\s*brochureLogoImage,/);
+  assert.match(app, /const isSectionBoundary = columnIndex === 1 \|\| columnIndex === 7/);
+  assert.match(app, /const mergedHeaderHeight = groupHeight \+ headerHeight/);
+  assert.match(app, /context\.moveTo\(columns\[9\]\.left, headerY\);[\s\S]*context\.lineTo\(columns\[2\]\.right, headerY\);/);
+  assert.match(app, /canvas\.toDataURL\("image\/png"\)/);
+  assert.match(app, /\(rightRevenue \?\? 0\) - \(leftRevenue \?\? 0\)/);
+  assert.match(css, /\.brochure-dialog\s*\{[^}]*width:\s*min\(760px,/s);
+  assert.match(css, /\.brochure-dialog-body\s*\{[^}]*display:\s*block;/s);
+  assert.match(css, /\.brochure-selection-summary\s*\{/);
+  assert.match(css, /\.brochure-close-icon\s*\{[^}]*stroke:\s*currentColor;[^}]*stroke-width:\s*2\.2;/s);
+  assert.doesNotMatch(css, /\.brochure-close-icon::before/);
+  assert.match(html, /legend-dot previous/);
+  assert.match(html, /legend-dot older/);
 });
 
 test("growth sorting preserves negative, zero, and positive numeric order", async () => {

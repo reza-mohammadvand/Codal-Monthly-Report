@@ -26,6 +26,13 @@ const JALALI_MONTHS = Object.freeze([
 ]);
 
 const ALL_INDUSTRIES_KEY = "__all__";
+const BROCHURE_CANVAS_WIDTH = 2160;
+const BROCHURE_MIN_CANVAS_HEIGHT = 1800;
+const BROCHURE_ROW_HEIGHT = 57;
+const BROCHURE_LOGO_URL = "/Logo.png";
+
+let brochureLogoImage = null;
+let brochureLogoPromise = null;
 
 const state = {
   dashboard: null,
@@ -44,6 +51,8 @@ const state = {
   pendingUpdateScope: null,
   toastTimer: null,
   updatePollTimer: null,
+  brochureIndustryId: null,
+  brochureIndustrySearch: "",
 };
 
 const elements = {
@@ -75,6 +84,16 @@ const elements = {
   incompleteDialog: document.querySelector("#incompleteDialog"),
   incompleteDialogDescription: document.querySelector("#incompleteDialogDescription"),
   incompleteList: document.querySelector("#incompleteList"),
+  brochureButton: document.querySelector("#brochureButton"),
+  brochureDialog: document.querySelector("#brochureDialog"),
+  brochureCloseButton: document.querySelector("#brochureCloseButton"),
+  brochureCancelButton: document.querySelector("#brochureCancelButton"),
+  brochureIndustrySearch: document.querySelector("#brochureIndustrySearch"),
+  brochureIndustryList: document.querySelector("#brochureIndustryList"),
+  brochureSelectionTitle: document.querySelector("#brochureSelectionTitle"),
+  brochureSelectionMeta: document.querySelector("#brochureSelectionMeta"),
+  brochureDownloadButton: document.querySelector("#brochureDownloadButton"),
+  brochureDownloadLabel: document.querySelector("#brochureDownloadLabel"),
   exportButton: document.querySelector("#exportButton"),
   updateSelectedButton: document.querySelector("#updateSelectedButton"),
   updateAllButton: document.querySelector("#updateAllButton"),
@@ -102,6 +121,10 @@ elements.updateAllButton.onclick = (event) => {
   requestUpdate("all");
 };
 elements.incompleteButton.onclick = () => openIncompleteDialog();
+elements.brochureButton.onclick = () => openBrochureDialog();
+elements.brochureCloseButton.onclick = () => elements.brochureDialog.close();
+elements.brochureCancelButton.onclick = () => elements.brochureDialog.close();
+elements.brochureDownloadButton.onclick = () => downloadBrochureImage();
 elements.confirmUpdateButton.onclick = () => {
   const scope = state.pendingUpdateScope;
   state.pendingUpdateScope = null;
@@ -123,6 +146,10 @@ const faPercent = new Intl.NumberFormat("fa-IR", {
   style: "percent",
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
+});
+const faBrochureNumber = new Intl.NumberFormat("fa-IR", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
 });
 const faDateTime = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
   dateStyle: "medium",
@@ -434,12 +461,15 @@ function hasUnitMismatch(company) {
 
 function incompleteCompanies() {
   return getIndustries()
-    .flatMap((industry) => (industry.companies ?? []).map((company) => ({
-      company,
-      industryName: industry.industryName || "صنعت نامشخص",
-      missingCount: missingDisplayedValueCount(company),
-      unitMismatch: hasUnitMismatch(company),
-    })))
+    .flatMap((industry) => (industry.companies ?? []).map((company) => {
+      const unitMismatch = hasUnitMismatch(company);
+      return {
+        company,
+        industryName: industry.industryName || "صنعت نامشخص",
+        missingCount: unitMismatch ? 0 : missingDisplayedValueCount(company),
+        unitMismatch,
+      };
+    }))
     .filter((item) => item.missingCount > 0 || item.unitMismatch)
     .sort((left, right) => companySymbol(left.company).localeCompare(companySymbol(right.company), "fa"));
 }
@@ -450,7 +480,7 @@ function openIncompleteDialog() {
   const missingCellCompanyCount = companies.filter((item) => item.missingCount > 0).length;
   const missingCellCount = companies.reduce((sum, item) => sum + item.missingCount, 0);
   elements.incompleteDialogDescription.textContent = companies.length
-    ? `از مجموع ${faInteger.format(companies.length)} نماد ناقص، ${faInteger.format(unitMismatchCount)} نماد تگ عدم تطابق واحد و ${faInteger.format(missingCellCompanyCount)} نماد تگ سلول ناقص دارند؛ در مجموع ${faInteger.format(missingCellCount)} سلول خالی است.`
+    ? `از مجموع ${faInteger.format(companies.length)} نماد نیازمند بررسی، ${faInteger.format(unitMismatchCount)} نماد عدم تطابق واحد و ${faInteger.format(missingCellCompanyCount)} نماد سلول ناقص دارند؛ در مجموع ${faInteger.format(missingCellCount)} سلول خالی در گروه دوم ثبت شده است.`
     : "هیچ نماد ناقصی در جدول تحلیلی پیدا نشد.";
   elements.incompleteList.innerHTML = companies.length
     ? companies.map(({ company, industryName, missingCount, unitMismatch }) => `
@@ -468,6 +498,602 @@ function openIncompleteDialog() {
     elements.incompleteDialog.showModal();
   } else {
     elements.incompleteDialog.setAttribute("open", "");
+  }
+}
+
+function activeBrochureIndustry() {
+  return getIndustries().find((industry, index) => (
+    industryKey(industry, index) === state.brochureIndustryId
+  )) ?? null;
+}
+
+function brochureMetric(company, path, metricKey = "dominantRevenue") {
+  const source = path === "period"
+    ? company?.periods?.target?.metrics
+    : path === "currentYtd"
+      ? company?.periods?.currentYtd?.metrics
+      : company?.growth?.[path];
+  return finiteNumber(source?.[metricKey]);
+}
+
+function jalaliMonthIndex(value) {
+  const month = validJalaliMonth(value);
+  return month ? month.year * 12 + month.month - 1 : null;
+}
+
+function latestCompanyReportMonth(company) {
+  const reports = (company?.monthlyReports ?? [])
+    .map((report) => validJalaliMonth(report))
+    .filter(Boolean)
+    .sort((left, right) => jalaliMonthIndex(right) - jalaliMonthIndex(left));
+  return reports[0]
+    ?? validJalaliMonth(company?.effectiveTargetMonth)
+    ?? validJalaliMonth(company?.definitions?.targetMonth)
+    ?? null;
+}
+
+function brochureReportState(company, expectedMonth) {
+  const latest = latestCompanyReportMonth(company);
+  const expectedIndex = jalaliMonthIndex(expectedMonth);
+  const latestIndex = jalaliMonthIndex(latest);
+  if (latestIndex === null) return { tone: "older", label: "بدون گزارش", month: null };
+  if (expectedIndex === null || latestIndex >= expectedIndex) {
+    return { tone: "latest", label: "گزارش به‌روز", month: latest };
+  }
+  const distance = expectedIndex - latestIndex;
+  return {
+    tone: distance === 1 ? "previous" : "older",
+    label: `گزارش ${JALALI_MONTHS[latest.month - 1]}`,
+    month: latest,
+  };
+}
+
+function brochureModel(industry = activeBrochureIndustry()) {
+  const expectedMonth = expectedLatestReportMonth()
+    ?? validJalaliMonth(state.dashboard?.metadata?.targetMonth);
+  const allCompanies = Array.isArray(industry?.companies) ? industry.companies : [];
+  const companies = [...allCompanies].sort((left, right) => {
+    const leftRevenue = brochureMetric(left, "period");
+    const rightRevenue = brochureMetric(right, "period");
+    if (leftRevenue === null && rightRevenue !== null) return 1;
+    if (leftRevenue !== null && rightRevenue === null) return -1;
+    if (leftRevenue !== rightRevenue) return (rightRevenue ?? 0) - (leftRevenue ?? 0);
+    return companySymbol(left).localeCompare(companySymbol(right), "fa");
+  });
+  const totalRevenue = companies.reduce((sum, company) => (
+    sum + (brochureMetric(company, "period") ?? 0)
+  ), 0);
+  const rows = companies.map((company, index) => {
+    const revenue = brochureMetric(company, "period");
+    return {
+      rank: index + 1,
+      symbol: companySymbol(company) || "—",
+      report: brochureReportState(company, expectedMonth),
+      revenue,
+      share: revenue !== null && totalRevenue > 0 ? revenue / totalRevenue : null,
+      monthlyGrowth: brochureMetric(company, "targetMoM"),
+      annualGrowth: brochureMetric(company, "targetYoY"),
+      salesGrowth: brochureMetric(company, "targetYoY", "dominantSales"),
+      rateGrowth: brochureMetric(company, "targetYoY", "dominantRate"),
+      ytdAverage: brochureMetric(company, "currentYtd"),
+      ytdGrowth: brochureMetric(company, "ytdYoY"),
+    };
+  });
+  return {
+    industryName: industry?.industryName || "صنعت انتخاب‌نشده",
+    expectedMonth,
+    rows,
+    currentCount: rows.filter((row) => row.report.tone === "latest").length,
+    totalCompanyCount: allCompanies.length,
+  };
+}
+
+function renderBrochureIndustryList() {
+  const query = normalizeText(state.brochureIndustrySearch);
+  const industries = getIndustries().map((industry, index) => ({
+    industry,
+    key: industryKey(industry, index),
+  })).filter(({ industry }) => (
+    !query || normalizeText(industry.industryName).includes(query)
+  ));
+  elements.brochureIndustryList.innerHTML = industries.length
+    ? industries.map(({ industry, key }) => {
+      const companies = industry.companies ?? [];
+      const selected = key === state.brochureIndustryId;
+      const expected = expectedLatestReportMonth();
+      const latestCount = companies.filter((company) => companyHasReportForMonth(company, expected)).length;
+      return `
+        <button
+          class="brochure-industry-option${selected ? " selected" : ""}"
+          type="button"
+          role="option"
+          aria-selected="${selected}"
+          data-brochure-industry="${escapeHtml(key)}"
+        >
+          <span class="brochure-industry-check" aria-hidden="true">${selected ? "✓" : "›"}</span>
+          <span>
+            <strong>${escapeHtml(industry.industryName || "صنعت بدون نام")}</strong>
+            <small>${faInteger.format(companies.length)} نماد • ${faInteger.format(latestCount)} گزارش به‌روز</small>
+          </span>
+        </button>
+      `;
+    }).join("")
+    : '<p class="brochure-picker-empty">صنعتی با این عبارت پیدا نشد.</p>';
+}
+
+function brochureRoundRect(context, x, y, width, height, radius) {
+  context.beginPath();
+  if (typeof context.roundRect === "function") {
+    context.roundRect(x, y, width, height, radius);
+    return;
+  }
+  const r = Math.min(radius, width / 2, height / 2);
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+}
+
+function brochureFont(weight, size) {
+  return `${weight} ${size}px "Sahel", Tahoma, Arial, sans-serif`;
+}
+
+function fitBrochureText(context, value, maxWidth) {
+  const text = String(value ?? "");
+  if (context.measureText(text).width <= maxWidth) return text;
+  let result = text;
+  while (result.length > 1 && context.measureText(`${result}…`).width > maxWidth) {
+    result = result.slice(0, -1);
+  }
+  return `${result}…`;
+}
+
+function drawBrochureText(context, value, x, y, {
+  color = "#f6f8fb",
+  font = brochureFont(500, 25),
+  align = "right",
+  maxWidth,
+} = {}) {
+  context.save();
+  context.direction = "rtl";
+  context.textAlign = align;
+  context.textBaseline = "middle";
+  context.fillStyle = color;
+  context.font = font;
+  const text = maxWidth ? fitBrochureText(context, value, maxWidth) : String(value ?? "");
+  context.fillText(text, x, y);
+  context.restore();
+}
+
+function drawBrochureLines(context, lines, x, centerY, options = {}) {
+  const lineHeight = options.lineHeight ?? 32;
+  const startY = centerY - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, index) => drawBrochureText(context, line, x, startY + index * lineHeight, options));
+}
+
+function formatBrochureAmount(value) {
+  const number = finiteNumber(value);
+  return number === null ? "—" : faBrochureNumber.format(number / 10_000);
+}
+
+function formatBrochureGrowth(value) {
+  const number = finiteNumber(value);
+  if (number === null) return { text: "—", color: "#8fa1b8" };
+  if (number === 0) return { text: "۰٪", color: "#aab8c9" };
+  return {
+    text: `${number > 0 ? "▲" : "▼"} ${faPercent.format(Math.abs(number))}`,
+    color: number > 0 ? "#42d990" : "#ff7785",
+  };
+}
+
+function loadBrochureLogo() {
+  if (brochureLogoImage?.complete && brochureLogoImage.naturalWidth) {
+    return Promise.resolve(brochureLogoImage);
+  }
+  if (brochureLogoPromise) return brochureLogoPromise;
+  brochureLogoPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+      brochureLogoImage = image;
+      resolve(image);
+    };
+    image.onerror = () => resolve(null);
+    image.src = BROCHURE_LOGO_URL;
+  });
+  return brochureLogoPromise;
+}
+
+function drawBrochureLogo(context) {
+  const panel = { x: 1966, y: 20, width: 126, height: 160 };
+  context.save();
+  context.shadowColor = "rgba(85, 203, 232, 0.2)";
+  context.shadowBlur = 26;
+  brochureRoundRect(context, panel.x, panel.y, panel.width, panel.height, 26);
+  const panelGradient = context.createLinearGradient(panel.x, panel.y, panel.x, panel.y + panel.height);
+  panelGradient.addColorStop(0, "#f4fcff");
+  panelGradient.addColorStop(1, "#d9f2f9");
+  context.fillStyle = panelGradient;
+  context.fill();
+  context.shadowColor = "transparent";
+  context.strokeStyle = "rgba(126, 205, 226, 0.82)";
+  context.lineWidth = 2;
+  context.stroke();
+
+  if (brochureLogoImage?.complete && brochureLogoImage.naturalWidth) {
+    const availableWidth = panel.width - 20;
+    const availableHeight = panel.height - 18;
+    const scale = Math.min(
+      availableWidth / brochureLogoImage.naturalWidth,
+      availableHeight / brochureLogoImage.naturalHeight,
+    );
+    const width = brochureLogoImage.naturalWidth * scale;
+    const height = brochureLogoImage.naturalHeight * scale;
+    context.drawImage(
+      brochureLogoImage,
+      panel.x + (panel.width - width) / 2,
+      panel.y + (panel.height - height) / 2,
+      width,
+      height,
+    );
+  } else {
+    context.fillStyle = "#313b78";
+    context.beginPath();
+    context.arc(panel.x + panel.width / 2, panel.y + panel.height / 2, 34, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
+function drawBrochureStatus(context, row, column, centerY) {
+  if (row.report.tone === "latest") {
+    context.beginPath();
+    context.arc(column.left + 22, centerY, 7, 0, Math.PI * 2);
+    context.fillStyle = "#42d990";
+    context.fill();
+    return;
+  }
+  const fill = row.report.tone === "previous" ? "#39280c" : "#3b1820";
+  const stroke = row.report.tone === "previous" ? "#b77a10" : "#c94a5b";
+  const color = row.report.tone === "previous" ? "#ffc044" : "#ff8390";
+  brochureRoundRect(context, column.left + 12, centerY - 19, 120, 38, 10);
+  context.fillStyle = fill;
+  context.fill();
+  context.strokeStyle = stroke;
+  context.lineWidth = 1.5;
+  context.stroke();
+  drawBrochureText(context, row.report.label, column.left + 72, centerY, {
+    align: "center",
+    color,
+    font: brochureFont(700, 18),
+    maxWidth: 106,
+  });
+}
+
+function brochureCanvasHeight(rowCount) {
+  return Math.max(BROCHURE_MIN_CANVAS_HEIGHT, 774 + Math.max(rowCount, 1) * BROCHURE_ROW_HEIGHT);
+}
+
+function drawBrochureImage(canvas, model) {
+  canvas.width = BROCHURE_CANVAS_WIDTH;
+  canvas.height = brochureCanvasHeight(model.rows.length);
+  const context = canvas.getContext("2d");
+  context.direction = "rtl";
+  context.fillStyle = "#0a1426";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawBrochureLogo(context);
+  drawBrochureText(context, `گروه ${model.industryName}`, 1940, 82, {
+    font: brochureFont(900, 56),
+    color: "#f7f8fb",
+    maxWidth: 1400,
+  });
+  const monthLabel = formatJalaliMonth(model.expectedMonth);
+  const freshness = model.rows.length
+    ? `${faInteger.format(model.currentCount)} از ${faInteger.format(model.rows.length)} نماد گزارش ${monthLabel} را منتشر کرده‌اند`
+    : `هنوز گزارشی برای ${monthLabel} ثبت نشده است`;
+  drawBrochureText(context, freshness, 1940, 139, {
+    font: brochureFont(700, 27),
+    color: model.currentCount === model.rows.length ? "#42d990" : "#f4bd62",
+    maxWidth: 1450,
+  });
+  drawBrochureText(context, monthLabel, 76, 79, {
+    align: "left",
+    font: brochureFont(900, 42),
+    color: "#ffbd24",
+  });
+  drawBrochureText(context, `${faInteger.format(model.rows.length)} نماد`, 76, 132, {
+    align: "left",
+    font: brochureFont(600, 22),
+    color: "#9fb0c5",
+  });
+  const separator = context.createLinearGradient(0, 0, canvas.width, 0);
+  separator.addColorStop(0, "#398cf4");
+  separator.addColorStop(0.52, "#9f7cc9");
+  separator.addColorStop(1, "#f06331");
+  context.fillStyle = separator;
+  context.fillRect(0, 196, canvas.width, 7);
+
+  brochureRoundRect(context, 68, 236, 2024, canvas.height - 405, 28);
+  context.fillStyle = "#101d31";
+  context.fill();
+  context.strokeStyle = "#293b55";
+  context.lineWidth = 2;
+  context.stroke();
+  drawBrochureText(context, "همه نمادهای گروه به ترتیب مبلغ فروش آخرین گزارش", 2038, 287, {
+    font: brochureFont(800, 32),
+  });
+  drawBrochureText(context, "مبالغ به میلیارد تومان", 2038, 329, {
+    font: brochureFont(500, 21),
+    color: "#9fb0c5",
+  });
+
+  const columnWidths = [80, 250, 190, 200, 200, 200, 200, 200, 230, 200];
+  const columnLabels = [
+    ["رتبه"], ["نماد"], ["مبلغ فروش", "میلیارد تومان"], ["سهم از صنعت", "از مبالغ نمایش‌داده‌شده"],
+    ["رشد ماهانه مبلغ", "نسبت به ماه قبل"], ["رشد سالانه مبلغ", "نسبت به ماه مشابه"],
+    ["رشد مقدار فروش", "نسبت به ماه مشابه"], ["رشد نرخ فروش", "نسبت به ماه مشابه"],
+    ["میانگین مبلغ فروش", "سال مالی تا ماه گزارش"], ["رشد دوره مالی", "نسبت به دوره مشابه"],
+  ];
+  let right = 2040;
+  const columns = columnWidths.map((width, index) => {
+    const column = { index, width, right, left: right - width, center: right - width / 2 };
+    right -= width;
+    return column;
+  });
+  const groupY = 368;
+  const groupHeight = 58;
+  const headerY = groupY + groupHeight;
+  const headerHeight = 126;
+  const headerBottom = headerY + headerHeight;
+  const mergedHeaderHeight = groupHeight + headerHeight;
+  context.fillStyle = "#23334f";
+  context.fillRect(columns[7].left, groupY, columns[2].right - columns[7].left, groupHeight);
+  context.fillStyle = "#1c2b45";
+  context.fillRect(columns[9].left, groupY, columns[8].right - columns[9].left, groupHeight);
+  drawBrochureText(context, `عملکرد فروش ${monthLabel}`, (columns[2].right + columns[7].left) / 2, groupY + groupHeight / 2, {
+    align: "center", font: brochureFont(800, 28),
+  });
+  drawBrochureText(context, `میانگین سال مالی تا ${monthLabel}`, (columns[8].right + columns[9].left) / 2, groupY + groupHeight / 2, {
+    align: "center", font: brochureFont(800, 25),
+  });
+  context.fillStyle = "#1e304a";
+  context.fillRect(columns[0].left, groupY, columns[0].width, mergedHeaderHeight);
+  context.fillStyle = "#192942";
+  context.fillRect(columns[1].left, groupY, columns[1].width, mergedHeaderHeight);
+  [0, 1].forEach((index) => {
+    const column = columns[index];
+    drawBrochureLines(context, columnLabels[index], column.center, groupY + mergedHeaderHeight / 2, {
+      align: "center",
+      color: "#f1f5fa",
+      font: brochureFont(700, 22),
+      lineHeight: 32,
+      maxWidth: column.width - 18,
+    });
+  });
+
+  context.fillStyle = "#1a2941";
+  context.fillRect(columns[9].left, headerY, columns[2].right - columns[9].left, headerHeight);
+  columns.slice(2).forEach((column, offset) => {
+    const index = offset + 2;
+    if (index % 2 === 1) {
+      context.fillStyle = "rgba(83, 119, 164, 0.08)";
+      context.fillRect(column.left, headerY, column.width, headerHeight);
+    }
+    drawBrochureLines(context, columnLabels[index], column.center, headerY + headerHeight / 2, {
+      align: "center",
+      color: index < 2 ? "#f1f5fa" : "#d5dfeb",
+      font: brochureFont(700, index === 3 ? 19 : 22),
+      lineHeight: 32,
+      maxWidth: column.width - 18,
+    });
+  });
+
+  context.strokeStyle = "#344966";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(columns[9].left, headerY);
+  context.lineTo(columns[2].right, headerY);
+  context.stroke();
+
+  columns.slice(2).forEach((column, offset) => {
+    const index = offset + 2;
+    if (index === 7 || index === 9) return;
+    context.strokeStyle = "#344966";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(column.left, headerY);
+    context.lineTo(column.left, headerBottom);
+    context.stroke();
+  });
+  [
+    { x: columns[0].right, width: 2, color: "#3d526f" },
+    { x: columns[0].left, width: 2, color: "#344966" },
+    { x: columns[1].left, width: 4, color: "#58708f" },
+    { x: columns[7].left, width: 4, color: "#58708f" },
+    { x: columns[9].left, width: 2, color: "#3d526f" },
+  ].forEach((separatorLine) => {
+    context.strokeStyle = separatorLine.color;
+    context.lineWidth = separatorLine.width;
+    context.beginPath();
+    context.moveTo(separatorLine.x, groupY);
+    context.lineTo(separatorLine.x, headerBottom);
+    context.stroke();
+  });
+
+  const imageRows = model.rows;
+  const rowHeight = BROCHURE_ROW_HEIGHT;
+  const rowStart = headerY + headerHeight;
+  imageRows.forEach((row, rowIndex) => {
+    const y = rowStart + rowIndex * rowHeight;
+    const centerY = y + rowHeight / 2;
+    context.fillStyle = rowIndex % 2 === 0 ? "#111f34" : "#14243a";
+    context.fillRect(columns[9].left, y, columns[0].right - columns[9].left, rowHeight);
+    columns.forEach((column, columnIndex) => {
+      if (columnIndex % 2 === 1) {
+        context.fillStyle = "rgba(80, 117, 163, 0.055)";
+        context.fillRect(column.left, y, column.width, rowHeight);
+      }
+      const isSectionBoundary = columnIndex === 1 || columnIndex === 7;
+      context.strokeStyle = isSectionBoundary ? "#4d6686" : "#2e425d";
+      context.lineWidth = isSectionBoundary ? 4 : 2;
+      context.beginPath();
+      context.moveTo(column.left, y);
+      context.lineTo(column.left, y + rowHeight);
+      context.stroke();
+    });
+    context.strokeStyle = "#26364e";
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.moveTo(columns[9].left, y + rowHeight);
+    context.lineTo(columns[0].right, y + rowHeight);
+    context.stroke();
+
+    drawBrochureText(context, faInteger.format(row.rank), columns[0].center, centerY, {
+      align: "center", font: brochureFont(700, 24),
+    });
+    drawBrochureText(context, row.symbol, columns[1].right - 14, centerY, {
+      font: brochureFont(900, 25), maxWidth: 102,
+    });
+    drawBrochureStatus(context, row, columns[1], centerY);
+    drawBrochureText(context, formatBrochureAmount(row.revenue), columns[2].center, centerY, {
+      align: "center", font: brochureFont(700, 24),
+    });
+    const shareText = row.share === null ? "—" : faPercent.format(row.share);
+    drawBrochureText(context, shareText, columns[3].right - 14, centerY, {
+      font: brochureFont(700, 21), maxWidth: 66,
+    });
+    if (row.share !== null) {
+      const barX = columns[3].left + 14;
+      const barWidth = 104;
+      brochureRoundRect(context, barX, centerY - 7, barWidth, 14, 7);
+      context.fillStyle = "#243b5d";
+      context.fill();
+      brochureRoundRect(context, barX, centerY - 7, Math.max(4, barWidth * row.share), 14, 7);
+      context.fillStyle = "#3f7ac1";
+      context.fill();
+    }
+    [row.monthlyGrowth, row.annualGrowth, row.salesGrowth, row.rateGrowth].forEach((value, valueIndex) => {
+      const display = formatBrochureGrowth(value);
+      drawBrochureText(context, display.text, columns[4 + valueIndex].center, centerY, {
+        align: "center", color: display.color, font: brochureFont(700, 23),
+      });
+    });
+    drawBrochureText(context, formatBrochureAmount(row.ytdAverage), columns[8].center, centerY, {
+      align: "center", font: brochureFont(700, 24),
+    });
+    const ytdDisplay = formatBrochureGrowth(row.ytdGrowth);
+    drawBrochureText(context, ytdDisplay.text, columns[9].center, centerY, {
+      align: "center", color: ytdDisplay.color, font: brochureFont(700, 23),
+    });
+  });
+
+  const tableBottom = rowStart + Math.max(imageRows.length, 1) * rowHeight;
+  [
+    { x: columns[0].right, width: 2, color: "#3d526f" },
+    { x: columns[1].left, width: 4, color: "#58708f" },
+    { x: columns[7].left, width: 4, color: "#58708f" },
+    { x: columns[9].left, width: 2, color: "#3d526f" },
+  ].forEach((separatorLine) => {
+    context.strokeStyle = separatorLine.color;
+    context.lineWidth = separatorLine.width;
+    context.beginPath();
+    context.moveTo(separatorLine.x, groupY);
+    context.lineTo(separatorLine.x, tableBottom);
+    context.stroke();
+  });
+
+  if (!imageRows.length) {
+    drawBrochureText(context, "داده‌ای برای نمایش در این صنعت وجود ندارد", canvas.width / 2, 960, {
+      align: "center", color: "#8fa1b8", font: brochureFont(700, 34),
+    });
+  }
+  const footerY = canvas.height - 75;
+  drawBrochureText(context, `منبع: سامانه کدال — گزارش‌های فعالیت ماهانه ${monthLabel}`, 2080, footerY, {
+    font: brochureFont(600, 24), color: "#a7b6c8",
+  });
+  drawBrochureText(context, "دیده‌بان کدال", 72, footerY, {
+    align: "left", font: brochureFont(800, 26), color: "#40d9c8",
+  });
+  return canvas;
+}
+
+function renderBrochureSelection() {
+  const industry = activeBrochureIndustry();
+  const model = brochureModel(industry);
+  elements.brochureSelectionTitle.textContent = model.industryName;
+  elements.brochureSelectionMeta.textContent = `${faInteger.format(model.rows.length)} نماد در یک تصویر • ${faInteger.format(model.currentCount)} گزارش ${formatJalaliMonth(model.expectedMonth)}`;
+  elements.brochureDownloadButton.disabled = model.rows.length === 0;
+  elements.brochureDownloadLabel.textContent = "دانلود تصویر کامل";
+}
+
+function brochureAssetsReady() {
+  const fontReady = document.fonts?.load
+    ? Promise.race([
+      Promise.allSettled([
+        document.fonts.load('700 24px "Sahel"'),
+        document.fonts.load('900 42px "Sahel"'),
+      ]),
+      new Promise((resolve) => window.setTimeout(resolve, 1_500)),
+    ])
+    : Promise.resolve();
+  return Promise.all([fontReady, loadBrochureLogo()]);
+}
+
+function openBrochureDialog() {
+  const industries = getIndustries();
+  if (!industries.length) {
+    showToast("هنوز صنعتی برای ساخت بروشور در پایگاه داده وجود ندارد.", "error");
+    return;
+  }
+  const activeExists = state.activeIndustryId !== ALL_INDUSTRIES_KEY
+    && industries.some((industry, index) => industryKey(industry, index) === state.activeIndustryId);
+  if (!state.brochureIndustryId) {
+    state.brochureIndustryId = activeExists ? state.activeIndustryId : industryKey(industries[0], 0);
+  }
+  state.brochureIndustrySearch = "";
+  elements.brochureIndustrySearch.value = "";
+  renderBrochureIndustryList();
+  renderBrochureSelection();
+  void brochureAssetsReady();
+  if (typeof elements.brochureDialog.showModal === "function") {
+    elements.brochureDialog.showModal();
+  } else {
+    elements.brochureDialog.setAttribute("open", "");
+  }
+}
+
+function safeBrochureFilename(value) {
+  return String(value ?? "brochure").replace(/[\\/:*?"<>|]/g, "-").trim() || "brochure";
+}
+
+async function downloadBrochureImage() {
+  const model = brochureModel();
+  if (!model.rows.length) return;
+  elements.brochureDownloadButton.disabled = true;
+  elements.brochureDownloadLabel.textContent = "در حال ساخت تصویر…";
+  try {
+    await brochureAssetsReady();
+    const month = formatJalaliMonth(model.expectedMonth).replaceAll(" ", "-");
+    const industry = safeBrochureFilename(model.industryName);
+    const canvas = document.createElement("canvas");
+    drawBrochureImage(canvas, model);
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = `${industry}-${month}.png`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    showToast(`تصویر کامل بروشور با ${faInteger.format(model.rows.length)} نماد دانلود شد.`, "success");
+  } catch (error) {
+    showToast(error?.message || "ساخت تصویر بروشور ناموفق بود.", "error");
+  } finally {
+    renderBrochureSelection();
   }
 }
 
@@ -779,7 +1405,7 @@ function renderUnifiedTable(companies) {
                   <small title="${escapeHtml(company.name || "")}">${escapeHtml(company.name || "نام شرکت ثبت نشده")}</small>
                   <span class="unified-fiscal-year">${escapeHtml(fiscalEndLabel(company.fiscalYearEndMonth))}</span>
                 </span>
-                <span class="badge status-${tone}">${escapeHtml(status)}</span>
+                ${unitMismatch ? "" : `<span class="badge status-${tone}">${escapeHtml(status)}</span>`}
                 ${unitMismatch ? '<span class="badge badge-unit-mismatch">عدم تطابق واحد</span>' : ""}
               </div>
             </th>
@@ -876,7 +1502,7 @@ function renderCompanyCard(company) {
           <span class="company-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
         </div>
         <div class="company-badges">
-          <span class="badge status-${tone}">${escapeHtml(status)}</span>
+          ${unitMismatch ? "" : `<span class="badge status-${tone}">${escapeHtml(status)}</span>`}
           <span class="badge">${escapeHtml(fiscalEndLabel(company.fiscalYearEndMonth))}</span>
           ${unitMismatch ? '<span class="badge badge-unit-mismatch">عدم تطابق واحد</span>' : ""}
           <span class="badge">بروزرسانی: ${escapeHtml(formatDateTime(company.updatedAt ?? state.dashboard?.metadata?.generatedAt))}</span>
@@ -1348,6 +1974,19 @@ elements.tableViewToggle.addEventListener("change", () => {
 elements.latestMonthOnlyToggle.addEventListener("change", () => {
   state.latestMonthOnly = elements.latestMonthOnlyToggle.checked;
   renderActiveIndustry();
+});
+
+elements.brochureIndustrySearch.addEventListener("input", () => {
+  state.brochureIndustrySearch = elements.brochureIndustrySearch.value;
+  renderBrochureIndustryList();
+});
+
+elements.brochureIndustryList.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-brochure-industry]");
+  if (!option) return;
+  state.brochureIndustryId = option.dataset.brochureIndustry;
+  renderBrochureIndustryList();
+  renderBrochureSelection();
 });
 
 elements.clearSelectionButton.addEventListener("click", () => {

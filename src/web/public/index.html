@@ -18,10 +18,11 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="/og.png">
     <link rel="icon" type="image/png" href="/og.png">
+    <link rel="preload" as="image" href="/Logo.png">
     <title>دیده‌بان گزارش‌های ماهانه کدال</title>
-    <link rel="stylesheet" href="/styles.css?v=17">
+    <link rel="stylesheet" href="/styles.css?v=23">
     <script src="/sorting.js?v=1" defer></script>
-    <script src="/app.js?v=33" defer></script>
+    <script src="/app.js?v=40" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#mainContent">رفتن به محتوای اصلی</a>
@@ -85,6 +86,10 @@
           </div>
 
           <div class="topbar-actions" aria-label="عملیات گزارش">
+            <button id="brochureButton" class="button button-brochure" type="button">
+              <span class="button-icon" aria-hidden="true">▥</span>
+              بروشور صنعت
+            </button>
             <button id="incompleteButton" class="button button-ghost" type="button">
               <span class="button-icon" aria-hidden="true">!</span>
               نمادهای ناقص
@@ -284,6 +289,53 @@
           <button class="button button-primary" value="cancel" type="submit">بستن</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="brochureDialog" class="brochure-dialog" aria-labelledby="brochureDialogTitle">
+      <div class="brochure-dialog-shell">
+        <header class="brochure-dialog-header">
+          <div>
+            <p class="eyebrow">خروجی تصویری گزارش ماهانه</p>
+            <h2 id="brochureDialogTitle">ساخت بروشور صنعت</h2>
+            <p>صنعت را انتخاب کنید؛ همه نمادهای آن صنعت در یک تصویر کامل قرار می‌گیرند.</p>
+          </div>
+          <button id="brochureCloseButton" class="dialog-close brochure-close" aria-label="بستن" type="button">
+            <svg class="brochure-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6 6l12 12M18 6L6 18"></path>
+            </svg>
+          </button>
+        </header>
+
+        <div class="brochure-dialog-body">
+          <aside class="brochure-picker" aria-label="انتخاب صنعت برای بروشور">
+            <label class="brochure-search" for="brochureIndustrySearch">
+              <span aria-hidden="true">⌕</span>
+              <input id="brochureIndustrySearch" type="search" placeholder="جست‌وجوی صنعت" autocomplete="off">
+            </label>
+            <div class="brochure-selection-summary" aria-live="polite">
+              <span>صنعت انتخاب‌شده</span>
+              <strong id="brochureSelectionTitle">—</strong>
+              <small id="brochureSelectionMeta">—</small>
+            </div>
+            <div id="brochureIndustryList" class="brochure-industry-list" role="listbox"></div>
+          </aside>
+        </div>
+
+        <footer class="brochure-dialog-footer">
+          <div class="brochure-legend" aria-label="راهنمای وضعیت گزارش‌ها">
+            <span><i class="legend-dot latest"></i> گزارش ماه مورد انتظار</span>
+            <span><i class="legend-dot previous"></i> گزارش ماه قبل</span>
+            <span><i class="legend-dot older"></i> گزارش قدیمی‌تر</span>
+          </div>
+          <div class="brochure-actions">
+            <button id="brochureCancelButton" class="button button-ghost" type="button">انصراف</button>
+            <button id="brochureDownloadButton" class="button button-brochure-primary" type="button">
+              <span aria-hidden="true">↓</span>
+              <span id="brochureDownloadLabel">دانلود تصویر کامل</span>
+            </button>
+          </div>
+        </footer>
+      </div>
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>

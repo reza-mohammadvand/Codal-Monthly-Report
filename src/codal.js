@@ -526,6 +526,13 @@ function identifySection(value) {
   return null;
 }
 
+function productionSalesRows(table, productColumn) {
+  const serviceBoundary = table.rows.findIndex((row) => (
+    identifySection(normalizeCodalText(row[productColumn])) === 'services'
+  ));
+  return serviceBoundary < 0 ? table.rows : table.rows.slice(0, serviceBoundary);
+}
+
 function sumPresent(values) {
   const present = values.filter((value) => value != null && Number.isFinite(value));
   return present.length ? present.reduce((sum, value) => sum + value, 0) : null;
@@ -585,7 +592,7 @@ function extractPeriodEntries(table, columns, set) {
   let section = 'unspecified';
   const entries = [];
 
-  for (const row of table.rows) {
+  for (const row of productionSalesRows(table, productColumn)) {
     const name = normalizeCodalText(row[productColumn]);
     if (!name) continue;
     const detectedSection = identifySection(name);
@@ -626,7 +633,7 @@ function extractReportedTotals(table, columns, set) {
   if (!set) return null;
   const productColumn = columns.find((column) => column.metric === 'product')?.index ?? 0;
   const unitColumn = columns.find((column) => column.metric === 'unit')?.index ?? 1;
-  const row = [...table.rows]
+  const row = [...productionSalesRows(table, productColumn)]
     .reverse()
     .find((candidate) => isGrandTotalRow(normalizeCodalText(candidate[productColumn])));
   if (!row) return null;

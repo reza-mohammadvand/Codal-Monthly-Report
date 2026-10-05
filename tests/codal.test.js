@@ -194,6 +194,25 @@ test('zero-only informational rows do not create a unit mismatch', () => {
   assert.equal(monthly.totals.unitsCompatible, true);
 });
 
+test('rows from درآمد ارائه خدمات onward are excluded from production and sales totals', () => {
+  const serviceRowsHtml = productionSalesHtml.replace(
+    /<tr><td>محصول ناسازگار[\s\S]*?<\/tr>/,
+    '<tr><td>درآمد ارائه خدمات</td><td></td>' + '<td></td>'.repeat(12) + '</tr>'
+      + '<tr><td>خدمات حمل</td><td>نفر ساعت</td><td>۹۹</td><td>۹۹</td><td>۵</td><td>۴۹۵</td>'
+      + '<td>۹۹</td><td>۹۹</td><td>۵</td><td>۴۹۵</td><td>۹۹</td><td>۹۹</td><td>۵</td><td>۴۹۵</td></tr>'
+      + '<tr><td>جمع</td><td>نفر ساعت</td><td>۹۹</td><td>۹۹</td><td>۵</td><td>۴۹۵</td>'
+      + '<td>۹۹</td><td>۹۹</td><td>۵</td><td>۴۹۵</td><td>۹۹</td><td>۹۹</td><td>۵</td><td>۴۹۵</td></tr>',
+  );
+  const monthly = parseProductionSalesReport(serviceRowsHtml).monthly;
+
+  assert.equal(monthly.products.some((product) => /خدمات/.test(product.name)), false);
+  assert.equal(monthly.totals.production, 23);
+  assert.equal(monthly.totals.salesQuantity, 30);
+  assert.equal(monthly.totals.revenue, 420);
+  assert.deepEqual(monthly.totals.units, ['تن']);
+  assert.equal(monthly.totals.unitsCompatible, true);
+});
+
 test('all-zero product revenue preserves explicit zero company totals', () => {
   const zeroRevenueHtml = `
   <html><body>
