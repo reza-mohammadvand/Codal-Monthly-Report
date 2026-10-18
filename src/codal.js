@@ -103,6 +103,22 @@ function parseSpan(attributes, name) {
   return Math.max(1, Number(match?.[1] ?? match?.[2] ?? 1));
 }
 
+function hasNegativeVisualMarker(value) {
+  const source = String(value ?? '');
+  return /(?:^|[\s"'])class\s*=\s*["'][^"']*\b(?:is-negative|negative|text-danger)\b/i.test(source)
+    || /\b(?:isNegative|negative)\s*[":=]\s*(?:true|["']true["'])/i.test(source)
+    || /\bcolor\s*:\s*(?:red|#(?:f00|ff0000)\b|rgb\(\s*255\s*,\s*0\s*,\s*0\s*\))/i.test(source);
+}
+
+function normalizeNumericCellText(value, visualMetadata = '') {
+  const text = normalizeCodalText(value);
+  const number = parseCodalNumber(text);
+  if (number != null && number > 0 && hasNegativeVisualMarker(visualMetadata)) {
+    return `(${text})`;
+  }
+  return text;
+}
+
 function parseRows(fragment) {
   const sourceRows = [];
   for (const rowMatch of fragment.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi)) {
@@ -110,7 +126,7 @@ function parseRows(fragment) {
     for (const cellMatch of rowMatch[1].matchAll(/<(th|td)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi)) {
       cells.push({
         tag: cellMatch[1].toLowerCase(),
-        text: normalizeCodalText(cellMatch[3]),
+        text: normalizeNumericCellText(cellMatch[3], `${cellMatch[2]} ${cellMatch[3]}`),
         colspan: parseSpan(cellMatch[2], 'colspan'),
         rowspan: parseSpan(cellMatch[2], 'rowspan'),
       });
@@ -256,7 +272,8 @@ function renderDatasourceRows(cells, tagName) {
         .map((cell) => {
           const rowSpan = Math.max(1, Number(cell?.rowSpan) || 1);
           const colSpan = Math.max(1, Number(cell?.colSpan) || 1);
-          return `<${tagName} rowspan="${rowSpan}" colspan="${colSpan}">${escapeHtml(cell?.value)}</${tagName}>`;
+          const value = normalizeNumericCellText(cell?.value, JSON.stringify(cell));
+          return `<${tagName} rowspan="${rowSpan}" colspan="${colSpan}">${escapeHtml(value)}</${tagName}>`;
         })
         .join('');
       return `<tr>${rendered}</tr>`;
@@ -517,7 +534,10 @@ function isGrandTotalRow(name) {
 }
 
 function identifySection(value) {
-  const text = productKey(value);
+  const text = productKey(value).replace(
+    /^(?:(?:\u062c\u0645\u0639|\u0645\u062c\u0645\u0648\u0639)(?:\s+\u06a9\u0644)?|\u06a9\u0644)\s+/,
+    '',
+  );
   if (/^فروش\s*داخلی(?:\s|$)/.test(text)) return 'domestic';
   if (/^فروش\s*صادرات|^صادراتی(?:\s|$)/.test(text)) return 'export';
   if (/^(?:درآمد\s*)?(?:حاصل\s*از\s*)?ارائه\s*خدمات(?:\s|$)|^درآمد\s*خدمات(?:\s|$)|^خدمات$/.test(text)) return 'services';
@@ -526,16 +546,77 @@ function identifySection(value) {
   return null;
 }
 
+function isAdjustmentSection(section) {
+  return section === 'returns' || section === 'discounts';
+}
+
+function normalizeAdjustmentMetrics(metrics, section) {
+  if (!isAdjustmentSection(section)) return metrics;
+  return {
+    ...metrics,
+    // Returns and discounts are deductions even on older Codal pages where
+    // their red cells are serialized as unsigned numbers.
+    salesQuantity: metrics.salesQuantity == null ? null : -Math.abs(metrics.salesQuantity),
+    revenue: metrics.revenue == null ? null : -Math.abs(metrics.revenue),
+  };
+}
+
 function productionSalesRows(table, productColumn) {
-  const serviceBoundary = table.rows.findIndex((row) => (
-    identifySection(normalizeCodalText(row[productColumn])) === 'services'
-  ));
-  return serviceBoundary < 0 ? table.rows : table.rows.slice(0, serviceBoundary);
+  const rows = [];
+  let serviceBoundaryReached = false;
+  let postServiceAdjustment = null;
+
+  for (const row of table.rows) {
+    const name = normalizeCodalText(row[productColumn]);
+    const detectedSection = identifySection(name);
+    if (!serviceBoundaryReached) {
+      if (detectedSection === 'services') {
+        serviceBoundaryReached = true;
+        continue;
+      }
+      rows.push(row);
+      continue;
+    }
+
+    // Service rows stay excluded, but Codal commonly places returns and
+    // discounts after that section (notably in pharmaceutical reports).
+    if (isAdjustmentSection(detectedSection)) {
+      postServiceAdjustment = detectedSection;
+      rows.push(row);
+      continue;
+    }
+    if (detectedSection) {
+      postServiceAdjustment = null;
+      continue;
+    }
+    if (isGrandTotalRow(name)) {
+      postServiceAdjustment = null;
+      continue;
+    }
+    if (postServiceAdjustment) rows.push(row);
+  }
+  return rows;
 }
 
 function sumPresent(values) {
   const present = values.filter((value) => value != null && Number.isFinite(value));
   return present.length ? present.reduce((sum, value) => sum + value, 0) : null;
+}
+
+function companyMetricValues(entries, metric) {
+  const values = entries
+    .filter((entry) => !entry.isAdjustment)
+    .map((entry) => entry[metric]);
+
+  for (const section of ['returns', 'discounts']) {
+    const adjustments = entries.filter((entry) => entry.isAdjustment && entry.section === section);
+    const subtotals = adjustments.filter((entry) => entry.isSubtotal && entry[metric] != null);
+    const selected = subtotals.length
+      ? subtotals
+      : adjustments.filter((entry) => !entry.isSubtotal);
+    values.push(...selected.map((entry) => entry[metric]));
+  }
+  return values;
 }
 
 function detectRevenueMultiplier(text) {
@@ -611,17 +692,21 @@ function extractPeriodEntries(table, columns, set) {
       // "تخفیفات" (and occasionally "برگشت از فروش") as signed financial
       // adjustments. Keep those rows in company totals, but mark them so they
       // can never be mistaken for the period's dominant product.
-      if (!hasMetric || !['returns', 'discounts'].includes(detectedSection)) continue;
     }
+    const isAdjustment = isAdjustmentSection(section) && !isGrandTotalRow(name);
+    const isSubtotal = isAdjustment && isTotalRow(name);
+    Object.assign(metrics, normalizeAdjustmentMetrics(metrics, isAdjustment ? section : null));
+    if (detectedSection && (!hasMetric || !isAdjustment)) continue;
     // Zero-only informational rows (for example investment-income disclosures
     // expressed in million rials) do not contribute to production or sales and
     // must not create a false quantity-unit mismatch.
-    if (!hasMetric || !hasOperatingValue || isTotalRow(name)) continue;
+    if (!hasMetric || !hasOperatingValue || (isTotalRow(name) && !isSubtotal)) continue;
     entries.push({
       name,
       key: productKey(name),
       section,
-      isAdjustment: Boolean(detectedSection),
+      isAdjustment,
+      isSubtotal,
       unit: normalizeUnit(row[unitColumn]),
       ...metrics,
     });
@@ -682,11 +767,11 @@ function aggregateEntries(entries, revenueMultiplier, reportedTotals = null) {
     };
   });
 
-  const units = unique(entries.map((entry) => entry.unit).filter(Boolean));
+  const units = unique(productEntries.map((entry) => entry.unit).filter(Boolean));
   const compatibleUnits = units.length <= 1;
-  const calculatedProduction = sumPresent(entries.map((entry) => entry.production));
-  const calculatedSalesQuantity = sumPresent(entries.map((entry) => entry.salesQuantity));
-  const calculatedRevenue = sumPresent(entries.map((entry) => entry.revenue));
+  const calculatedProduction = sumPresent(companyMetricValues(entries, 'production'));
+  const calculatedSalesQuantity = sumPresent(companyMetricValues(entries, 'salesQuantity'));
+  const calculatedRevenue = sumPresent(companyMetricValues(entries, 'revenue'));
   // Prefer every populated value in Codal's final "جمع" row. When Codal omits
   // a total, fall back to the sum of the corresponding product cells. Quantity
   // values are deliberately summed even when their units differ; the mismatch

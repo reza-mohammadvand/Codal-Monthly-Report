@@ -213,6 +213,38 @@ test('rows from درآمد ارائه خدمات onward are excluded from produc
   assert.equal(monthly.totals.unitsCompatible, true);
 });
 
+test('returns after the service section reduce totals while service revenue stays excluded', () => {
+  const html = `
+  <html><body>
+    <div>تولید و فروش - کلیه مبالغ به میلیون ریال است</div>
+    <table>
+      <thead>
+        <tr><th colspan="2">شرح</th><th colspan="4">دوره یک ماهه منتهی به ۱۴۰۵/۰۶/۳۱</th></tr>
+        <tr><th>نام محصول</th><th>واحد</th><th>تعداد تولید</th><th>تعداد فروش</th><th>نرخ فروش</th><th>مبلغ فروش</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>فروش داخلی:</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>محصول الف</td><td>عدد</td><td>۲۰</td><td>۱۰</td><td></td><td>۱۰۰</td></tr>
+        <tr><td>درآمد ارائه خدمات:</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>خدمات حمل</td><td>ساعت</td><td>۵</td><td>۵</td><td></td><td>۲۰</td></tr>
+        <tr><td>جمع درآمد ارائه خدمات</td><td>ساعت</td><td>۵</td><td>۵</td><td></td><td>۲۰</td></tr>
+        <tr><td>برگشت از فروش:</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>محصول برگشتی</td><td>عدد</td><td></td><td class="is-negative">۱</td><td></td><td class="is-negative">۱۰</td></tr>
+        <tr><td>جمع برگشت از فروش</td><td>عدد</td><td></td><td class="is-negative">۱</td><td></td><td class="is-negative">۱۰</td></tr>
+        <tr><td>جمع</td><td></td><td>۲۵</td><td>۱۴</td><td></td><td>۱۱۰</td></tr>
+      </tbody>
+    </table>
+  </body></html>`;
+
+  const monthly = parseProductionSalesReport(html).monthly;
+  assert.equal(monthly.products.some((product) => /خدمات/.test(product.name)), false);
+  assert.equal(monthly.reportedTotals, null);
+  assert.equal(monthly.totals.production, 20);
+  assert.equal(monthly.totals.salesQuantity, 9);
+  assert.equal(monthly.totals.revenue, 90);
+  assert.equal(monthly.adjustments.length, 2);
+});
+
 test('all-zero product revenue preserves explicit zero company totals', () => {
   const zeroRevenueHtml = `
   <html><body>
@@ -268,11 +300,11 @@ test('returns and discounts affect fallback and reported company totals', () => 
 
   const monthly = parseProductionSalesReport(adjustmentHtml).monthly;
   assert.equal(monthly.products[0].name, 'محصول الف');
-  assert.equal(monthly.products[0].salesQuantity, 9);
-  assert.equal(monthly.products[0].revenue, 90);
+  assert.equal(monthly.products[0].salesQuantity, 10);
+  assert.equal(monthly.products[0].revenue, 100);
   assert.equal(monthly.products.some((product) => /تخفیف/.test(product.name)), false);
-  assert.equal(monthly.adjustments.length, 1);
-  assert.equal(monthly.adjustments[0].section, 'discounts');
+  assert.equal(monthly.adjustments.length, 2);
+  assert.deepEqual(monthly.adjustments.map((entry) => entry.section), ['returns', 'discounts']);
   assert.equal(monthly.totals.unit, 'هزار تن');
   assert.equal(monthly.totals.production, 18);
   assert.equal(monthly.totals.salesQuantity, 14);
@@ -281,6 +313,40 @@ test('returns and discounts affect fallback and reported company totals', () => 
   assert.equal(monthly.totals.revenue, 164);
   assert.equal(monthly.totals.rate, 164_000_000 / 14);
   assert.equal(monthly.totals.weightedRate, 164_000_000 / 14);
+});
+
+test('red adjustment cells reduce totals and adjustment subtotals are not double counted', () => {
+  const adjustmentHtml = `
+  <html><body>
+    <div>تولید و فروش - کلیه مبالغ به میلیون ریال است</div>
+    <table>
+      <thead>
+        <tr><th colspan="2">شرح</th><th colspan="4">دوره یک ماهه منتهی به ۱۴۰۵/۰۵/۳۱</th></tr>
+        <tr>
+          <th>نام محصول</th><th>واحد</th><th>تعداد تولید</th><th>تعداد فروش</th>
+          <th>نرخ فروش (ریال)</th><th>مبلغ فروش (میلیون ریال)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>فروش داخلی:</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>محصول الف</td><td>هزار تن</td><td>۱۰</td><td>۱۰</td><td></td><td>۱۰۰</td></tr>
+        <tr><td>محصول ب</td><td>هزار تن</td><td>۸</td><td>۵</td><td></td><td>۸۰</td></tr>
+        <tr><td>برگشت از فروش:</td><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>محصول الف</td><td>هزار تن</td><td></td><td class="is-negative">۱</td><td></td><td class="is-negative">۱۰</td></tr>
+        <tr><td>جمع برگشت از فروش</td><td>هزار تن</td><td></td><td class="is-negative">۱</td><td></td><td class="is-negative">۱۰</td></tr>
+        <tr><td>تخفیفات</td><td></td><td></td><td></td><td></td><td style="color: red">۵</td></tr>
+      </tbody>
+    </table>
+  </body></html>`;
+
+  const monthly = parseProductionSalesReport(adjustmentHtml).monthly;
+  assert.equal(monthly.calculatedSalesQuantity, 14);
+  assert.equal(monthly.calculatedRevenue, 165);
+  assert.equal(monthly.totals.salesQuantity, 14);
+  assert.equal(monthly.totals.revenue, 165);
+  assert.equal(monthly.totals.rate, 165_000_000 / 14);
+  assert.equal(monthly.adjustments.length, 3);
+  assert.equal(monthly.adjustments.filter((entry) => entry.isSubtotal).length, 1);
 });
 
 test('latest correction is selected for each symbol and Jalali month', () => {
